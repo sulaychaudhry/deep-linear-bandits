@@ -9,3 +9,15 @@ dependencies = [
     "pandas>=3.0.0",
     "torch>=2.10.0",
 ]
+
+[project.scripts]
+dlb = "deep_linear_bandits:main"
+
+[build-system]
+requires = ["uv_build>=0.10.3,<0.11.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "notebook>=7.5.3",
+]
