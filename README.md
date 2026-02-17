@@ -1,1 +1,1 @@
-# deep-linear-bandits
+# Bandits for Online Exploration in Deep Recommenders
