@@ -1,0 +1,11 @@
+[project]
+name = "deep-linear-bandits"
+version = "0.1.0"
+description = "An investigation into multi-armed bandits (MABs), specifically generalisations such as the contextual bandit and their solutions, for alleviating existing policy bias and encouraging exploration in modern deep-learning recommendation systems."
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "numpy>=2.4.2",
+    "pandas>=3.0.0",
+    "torch>=2.10.0",
+]
