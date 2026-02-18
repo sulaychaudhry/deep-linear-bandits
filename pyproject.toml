@@ -8,8 +8,39 @@ dependencies = [
     "numpy>=2.4.2",
     "pandas>=3.0.0",
     "scikit-learn>=1.8.0",
+]
+
+[project.optional-dependencies]
+cpu = [
     "torch>=2.10.0",
 ]
+gpu = [
+    "torch>=2.10.0",
+]
+
+[tool.uv]
+conflicts = [
+    [
+        { extra = "cpu" },
+        { extra = "gpu" },
+    ]
+]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-gpu", extra = "gpu" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-gpu"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
 
 [project.scripts]
 dlb = "deep_linear_bandits:main"
