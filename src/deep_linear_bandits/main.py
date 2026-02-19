@@ -26,7 +26,7 @@ def main():
 
     # Set up loss function & SGD optimiser
     loss_fn = nn.CrossEntropyLoss()
-    optimiser = torch.optim.SGD(model.parameters(), lr=1e-3)
+    optimiser = torch.optim.Adam(model.parameters())
 
     print(loss_fn)
     print(optimiser)
