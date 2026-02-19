@@ -48,7 +48,7 @@ def load_kuairec_big(big_matrix_path):
 class KRDataset(Dataset):
     def __init__(self, interactions_table):
         self.user_ids = interactions_table['user_id'].to_numpy()
-        self.video_ids = interactions_table['video_id'].to_numpy()
+        self.item_ids = interactions_table['video_id'].to_numpy()
     
     def __len__(self):
         return len(self.user_ids)
@@ -56,5 +56,5 @@ class KRDataset(Dataset):
     def __getitem__(self, idx):
         return {
             'user_id': self.user_ids[idx],
-            'video_id': self.video_ids[idx]
+            'item_id': self.item_ids[idx]
         }
