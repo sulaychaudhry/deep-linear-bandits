@@ -8,7 +8,7 @@ from deep_linear_bandits.two_tower import TwoTower
 from tqdm import tqdm
 
 BATCH_SIZE = 512
-TEMP = 0.05
+TEMP = 0.1
 
 def main():
     # Set up the train-val splitted dataset in PyTorch's Dataset format
@@ -34,7 +34,7 @@ def main():
 
     # Set up random sampling of batches via DataLoader
     bm_train_loader = DataLoader(bm_train, batch_size=BATCH_SIZE, shuffle=True)
-    bm_val_loader = DataLoader(bm_train, batch_size=BATCH_SIZE, shuffle=True)
+    bm_val_loader = DataLoader(bm_val, batch_size=BATCH_SIZE, shuffle=True)
 
     # # Testing: peek at logits within this small 5-sized batch
     # # Note that logits should be highest along the diagonal since those are the pairs that it actually likes

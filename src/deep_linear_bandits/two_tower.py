@@ -74,7 +74,7 @@ class TwoTower(nn.Module):
         i = self.item_tower(item_ids)
 
         u = F.normalize(u)
-        i = F.normalize(u)
+        i = F.normalize(i)
 
         # Calculate dot products between users & items
         # These are the raw scores (logits)
