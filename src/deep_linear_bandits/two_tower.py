@@ -15,19 +15,13 @@ class UserTower(nn.Module):
 
         self.id_embedder = nn.Embedding(7176, USER_ID_DIMS)
 
-        # Tower temporarily smaller for ID-only testing
-        self.tower = nn.Sequential(
-            nn.Linear(USER_ID_DIMS, 1024),
-            nn.ReLU(),
-            nn.Linear(1024, 512),
-            nn.ReLU(),
-            nn.Linear(512, 128)
-        )
+        # # Tower temporarily smaller for ID-only testing
+        # self.tower = nn.Sequential(
+        #     nn.Linear(USER_ID_DIMS, 128)
+        # )
     
     def forward(self, user_ids):
-        return self.tower(
-            self.id_embedder(user_ids)
-        )
+        return self.id_embedder(user_ids)
 
 """
 Sets up the item tower:
@@ -40,19 +34,13 @@ class ItemTower(nn.Module):
 
         self.id_embedder = nn.Embedding(10728, ITEM_ID_DIMS)
 
-        # Tower temporarily smaller for ID-only testing
-        self.tower = nn.Sequential(
-            nn.Linear(ITEM_ID_DIMS, 1024),
-            nn.ReLU(),
-            nn.Linear(1024, 512),
-            nn.ReLU(),
-            nn.Linear(512, 128)
-        )
+        # # Tower temporarily smaller for ID-only testing
+        # self.tower = nn.Sequential(
+        #     nn.Linear(ITEM_ID_DIMS, 128)
+        # )
     
     def forward(self, item_ids):
-        return self.tower(
-            self.id_embedder(item_ids)
-        )
+        return self.id_embedder(item_ids)
 
 """
 Sets up the Two Tower architecture:

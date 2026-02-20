@@ -42,6 +42,9 @@ def load_kuairec_big(big_matrix_path):
     )
     bm_train = pd.concat([bm_train, big_matrix[low_interaction_mask]])
 
+    print(len(bm_train))
+    print(len(bm_val))
+
     # Convert to PyTorch dataset format & return
     return KRDataset(bm_train), KRDataset(bm_val)
 

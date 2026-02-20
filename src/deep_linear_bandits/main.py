@@ -7,8 +7,8 @@ from deep_linear_bandits.two_tower import TwoTower
 
 from tqdm import tqdm
 
-BATCH_SIZE = 512
-TEMP = 0.1
+BATCH_SIZE = 2048
+TEMP = 1.0
 
 def main():
     # Set up the train-val splitted dataset in PyTorch's Dataset format
@@ -59,7 +59,7 @@ def main():
     target = torch.arange(BATCH_SIZE, device=device) # avoid recreating tensor each time
     total_t_batches = len(bm_train_loader)
     total_v_batches = len(bm_val_loader)
-    epochs = 10
+    epochs = 50
     for epoch in tqdm(range(epochs)):
         avg_t_loss = 0
 
