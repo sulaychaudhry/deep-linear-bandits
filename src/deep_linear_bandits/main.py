@@ -3,27 +3,66 @@ from deep_linear_bandits.two_tower import TwoTower
 import torch
 from torch.utils.data import DataLoader
 from torch import nn
+from tqdm import tqdm
+
+BATCH_SIZE=1024 # 512 I know works; but 1024 is good on GPU
 
 def main():
-    bm = load_kuairec_big()
+    bm_train, bm_val = load_kuairec_big()
 
     #print(bm.user_ids)
     #print(bm.item_ids)
 
+    print(len(bm_train))
+
     device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
     model = TwoTower().to(device)
-    model.train()
 
     #print(model)
 
-    bm_ldr = DataLoader(bm, batch_size=32, shuffle=True)
+    bm_t_ldr = DataLoader(bm_train, batch_size=BATCH_SIZE, shuffle=True)
+    bm_v_ldr = DataLoader(bm_val, batch_size=BATCH_SIZE, shuffle=True)
 
-    
+    loss_fn = nn.CrossEntropyLoss()
+    opt = torch.optim.Adam(model.parameters())
 
-    # # ----------------------
-    # Experiment to gauge self convergence
-    # (turns out model needs temp=0.05 to 0.1 to make small dissimilarities/angular differences matter more)
-    # (this ensures that it can actually learn to separate them, as softmax thinks everything is roughly equal before, especially in just the range -1 to 1 which is what L2 norm will give)
+    epochs = 100
+    for epoch in range(epochs):
+        model.train()
+        l_t = 0
+        for batch in tqdm(bm_t_ldr):
+            opt.zero_grad()
+
+            logits = model(batch['user_id'].to(device), batch['item_id'].to(device))
+            target = torch.arange(logits.size(dim=0), device=device)
+
+            loss = loss_fn(logits, target)
+            loss.backward()
+            opt.step()
+
+            l_t += loss.item()
+        l_t /= len(bm_t_ldr)
+
+        model.eval()
+        l_v = 0
+        with torch.no_grad():
+            for batch in tqdm(bm_v_ldr):
+                logits = model(batch['user_id'].to(device), batch['item_id'].to(device))
+                target = torch.arange(logits.size(dim=0), device=device)
+                l_v += loss_fn(logits, target).item()
+        l_v /= len(bm_v_ldr)
+
+        print(f"End of training epoch {epoch}; avg batch loss (train): {l_t}")
+        print(f"End of training epoch {epoch}; avg batch loss (val): {l_v}")
+
+        
+
+
+
+    # # # ----------------------
+    # # Experiment to gauge self convergence
+    # # (turns out model needs temp=0.05 to 0.1 to make small dissimilarities/angular differences matter more)
+    # # (this ensures that it can actually learn to separate them, as softmax thinks everything is roughly equal before, especially in just the range -1 to 1 which is what L2 norm will give)
 
     # batch = next(iter(bm_ldr))
 
@@ -32,12 +71,12 @@ def main():
     # #print(torch.argmax(logits, dim=1))
 
     # loss_fn = nn.CrossEntropyLoss()
-    # opt = torch.optim.Adam(model.parameters(), lr=0.003)
+    # opt = torch.optim.Adam(model.parameters(), lr=0.003) # 0.003 observed to be good so far
 
     # #print(loss_fn(logits, torch.arange(logits.size(dim=0), device=device)).item())
 
-    # print(f"User IDs: {batch['user_id']}")
-    # print(f"Item IDs: {batch['item_id']}")
+    # print(f"User IDs: {list(enumerate(batch['user_id']))}")
+    # print(f"Item IDs: {list(enumerate(batch['item_id']))}")
 
     # for i in range(1000):
     #     opt.zero_grad()

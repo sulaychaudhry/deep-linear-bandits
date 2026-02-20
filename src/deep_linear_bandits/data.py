@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from torch.utils.data import Dataset
+from sklearn.model_selection import train_test_split
 
 def load_kuairec_big():
     bm = pd.read_csv(
@@ -30,7 +31,21 @@ def load_kuairec_big():
     #print(np.sort(bm['video_id'].unique()))
     #print(len(bm['video_id'].unique()))
 
-    return KRDataset(bm)
+    low = bm.groupby('user_id')['user_id'].transform('count') < 5
+
+    split = bm[~low]
+    bm_train, bm_val = train_test_split(
+        split,
+        train_size=0.8,
+        shuffle=True,
+        stratify=split['user_id']
+    )
+    bm_train = pd.concat([bm_train, bm[low]])
+
+    # print(bm_train)
+    # print(bm_val)
+
+    return KRDataset(bm_train), KRDataset(bm_val)
 
 class KRDataset(Dataset):
     def __init__(self, data):
