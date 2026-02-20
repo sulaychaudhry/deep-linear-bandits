@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+import torch.nn.functional as F
 
 USER_ID_DIMS = ITEM_ID_DIMS = 64
 
@@ -14,6 +15,7 @@ class UserTower(nn.Module):
 
         self.id_embedder = nn.Embedding(7176, USER_ID_DIMS)
 
+        # Tower temporarily smaller for ID-only testing
         self.tower = nn.Sequential(
             nn.Linear(USER_ID_DIMS, 1024),
             nn.ReLU(),
@@ -38,6 +40,7 @@ class ItemTower(nn.Module):
 
         self.id_embedder = nn.Embedding(10728, ITEM_ID_DIMS)
 
+        # Tower temporarily smaller for ID-only testing
         self.tower = nn.Sequential(
             nn.Linear(ITEM_ID_DIMS, 1024),
             nn.ReLU(),
@@ -69,6 +72,9 @@ class TwoTower(nn.Module):
     def forward(self, user_ids, item_ids):
         u = self.user_tower(user_ids)
         i = self.item_tower(item_ids)
+
+        u = F.normalize(u)
+        i = F.normalize(u)
 
         # Calculate dot products between users & items
         # These are the raw scores (logits)

@@ -7,7 +7,8 @@ from deep_linear_bandits.two_tower import TwoTower
 
 from tqdm import tqdm
 
-BATCH_SIZE = 2048
+BATCH_SIZE = 512
+TEMP = 0.05
 
 def main():
     # Set up the train-val splitted dataset in PyTorch's Dataset format
@@ -33,6 +34,7 @@ def main():
 
     # Set up random sampling of batches via DataLoader
     bm_train_loader = DataLoader(bm_train, batch_size=BATCH_SIZE, shuffle=True)
+    bm_val_loader = DataLoader(bm_train, batch_size=BATCH_SIZE, shuffle=True)
 
     # # Testing: peek at logits within this small 5-sized batch
     # # Note that logits should be highest along the diagonal since those are the pairs that it actually likes
@@ -55,13 +57,17 @@ def main():
 
     # Set up an epoch of training
     target = torch.arange(BATCH_SIZE, device=device) # avoid recreating tensor each time
-    total_batches = len(bm_train_loader) # use to ensure that last batch does not try use 512-sized target
+    total_t_batches = len(bm_train_loader)
+    total_v_batches = len(bm_val_loader)
     epochs = 10
     for epoch in tqdm(range(epochs)):
+        avg_t_loss = 0
+
+        model.train()
         for batch in bm_train_loader:
             optimiser.zero_grad()
 
-            preds = model(batch['user_id'].to(device), batch['item_id'].to(device))
+            preds = model(batch['user_id'].to(device), batch['item_id'].to(device)) / TEMP
 
             if preds.size(dim=0) == BATCH_SIZE:
                 loss = loss_fn(preds, target)
@@ -71,4 +77,26 @@ def main():
             loss.backward()
             optimiser.step()
 
-        tqdm.write(f"End of epoch {epoch} loss seen last: {loss.item()}")
+            avg_t_loss += loss.item()
+            
+        avg_t_loss /= total_t_batches
+
+        # Evaluate loss on the validation set too as a sanity check
+        model.eval()
+        avg_v_loss = 0
+        with torch.no_grad():  
+            for batch in bm_val_loader:
+                preds = model(batch['user_id'].to(device), batch['item_id'].to(device)) / TEMP
+
+                if preds.size(dim=0) == BATCH_SIZE:
+                    loss = loss_fn(preds, target)
+                else:
+                    loss = loss_fn(preds, torch.arange(preds.size(dim=0), device=device))
+
+                avg_v_loss += loss.item()
+
+        avg_v_loss /= total_v_batches
+        
+        tqdm.write(f"End of epoch {epoch}")
+        tqdm.write(f"Average training loss per-batch: {avg_t_loss}")
+        tqdm.write(f"Average validation loss per-batch: {avg_v_loss}")
