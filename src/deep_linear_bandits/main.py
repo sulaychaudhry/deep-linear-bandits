@@ -1,102 +1,69 @@
-import torch
-from torch import nn
-from torch.utils.data import DataLoader
-
 from deep_linear_bandits.data import load_kuairec_big
 from deep_linear_bandits.two_tower import TwoTower
-
-from tqdm import tqdm
-
-BATCH_SIZE = 2048
-TEMP = 1.0
+import torch
+from torch.utils.data import DataLoader
+from torch import nn
 
 def main():
-    # Set up the train-val splitted dataset in PyTorch's Dataset format
-    bm_train, bm_val = load_kuairec_big('/home/sulay/deep-linear-bandits/kuairec/data/big_matrix.csv')
+    bm = load_kuairec_big()
 
-    print(bm_train)
-    print(bm_val)
+    #print(bm.user_ids)
+    #print(bm.item_ids)
 
-    # Set up model on GPU
     device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
     model = TwoTower().to(device)
-    model.train() # Switch model into 'training mode'
+    model.train()
 
-    print(device)
-    print(model)
+    #print(model)
 
-    # Set up loss function & SGD optimiser
-    loss_fn = nn.CrossEntropyLoss()
-    optimiser = torch.optim.Adam(model.parameters())
+    bm_ldr = DataLoader(bm, batch_size=32, shuffle=True)
 
-    print(loss_fn)
-    print(optimiser)
+    
 
-    # Set up random sampling of batches via DataLoader
-    bm_train_loader = DataLoader(bm_train, batch_size=BATCH_SIZE, shuffle=True)
-    bm_val_loader = DataLoader(bm_val, batch_size=BATCH_SIZE, shuffle=True)
+    # # ----------------------
+    # Experiment to gauge self convergence
+    # (turns out model needs temp=0.05 to 0.1 to make small dissimilarities/angular differences matter more)
+    # (this ensures that it can actually learn to separate them, as softmax thinks everything is roughly equal before, especially in just the range -1 to 1 which is what L2 norm will give)
 
-    # # Testing: peek at logits within this small 5-sized batch
-    # # Note that logits should be highest along the diagonal since those are the pairs that it actually likes
-    # # Training target should be along the diagonal (1s on diagonal and 0s elsewhere) i.e. an identity matrix
-    # # CrossEntropyLoss also supports using class indices i.e. first user should have highest dot prod with first item, etc.
-    # # This is easier
-    # bm_train_iterator = iter(bm_train_loader)
-    # test = next(bm_train_iterator)
-    # print(test['user_id'][:5])
-    # print(test['item_id'][:5])
-    # print(res := model(test['user_id'][:5].to(device), test['item_id'][:5].to(device)))
-    # print(loss_fn(res, torch.arange(0, 5, device=device))) # class index way
-    # print(loss_fn(res, torch.eye(5, device=device))) # identity matrix way; result is the same
+    # batch = next(iter(bm_ldr))
 
-    # # Testing: ensuring that loss works as expected
-    # print(loss_fn(
-    #     torch.eye(5, device=device) * 10, # example in which logits are very heavily aligned towards the positive interaction
-    #     torch.eye(5, device=device)
-    # ))
+    # logits = model(batch['user_id'].to(device), batch['item_id'].to(device))
+    # #print(logits)
+    # #print(torch.argmax(logits, dim=1))
 
-    # Set up an epoch of training
-    target = torch.arange(BATCH_SIZE, device=device) # avoid recreating tensor each time
-    total_t_batches = len(bm_train_loader)
-    total_v_batches = len(bm_val_loader)
-    epochs = 50
-    for epoch in tqdm(range(epochs)):
-        avg_t_loss = 0
+    # loss_fn = nn.CrossEntropyLoss()
+    # opt = torch.optim.Adam(model.parameters(), lr=0.003)
 
-        model.train()
-        for batch in bm_train_loader:
-            optimiser.zero_grad()
+    # #print(loss_fn(logits, torch.arange(logits.size(dim=0), device=device)).item())
 
-            preds = model(batch['user_id'].to(device), batch['item_id'].to(device)) / TEMP
+    # print(f"User IDs: {batch['user_id']}")
+    # print(f"Item IDs: {batch['item_id']}")
 
-            if preds.size(dim=0) == BATCH_SIZE:
-                loss = loss_fn(preds, target)
-            else:
-                loss = loss_fn(preds, torch.arange(preds.size(dim=0), device=device))
+    # for i in range(1000):
+    #     opt.zero_grad()
 
-            loss.backward()
-            optimiser.step()
+    #     #print(batch['user_id'])
+    #     #print(batch['item_id'])
 
-            avg_t_loss += loss.item()
-            
-        avg_t_loss /= total_t_batches
+    #     logits = model(batch['user_id'].to(device), batch['item_id'].to(device))
 
-        # Evaluate loss on the validation set too as a sanity check
-        model.eval()
-        avg_v_loss = 0
-        with torch.no_grad():  
-            for batch in bm_val_loader:
-                preds = model(batch['user_id'].to(device), batch['item_id'].to(device)) / TEMP
+    #     #print(logits)
+    #     #print(torch.max(logits, dim=1))
 
-                if preds.size(dim=0) == BATCH_SIZE:
-                    loss = loss_fn(preds, target)
-                else:
-                    loss = loss_fn(preds, torch.arange(preds.size(dim=0), device=device))
+    #     target = torch.arange(logits.size(dim=0), device=device)
+    #     #print(target)
 
-                avg_v_loss += loss.item()
+    #     loss = loss_fn(logits, target)
 
-        avg_v_loss /= total_v_batches
+    #     loss.backward()
+    #     opt.step()
         
-        tqdm.write(f"End of epoch {epoch}")
-        tqdm.write(f"Average training loss per-batch: {avg_t_loss}")
-        tqdm.write(f"Average validation loss per-batch: {avg_v_loss}")
+    #     if i % 100 == 0:
+    #         print("-----------------------")
+    #         print(f"Iteration {i}: loss seen {loss.item()}")
+    #         print(f"Max item logits per user: {torch.max(logits,dim=1)}")
+    #         # Should look for the mischosen items; check what the logits are for that user's row vs. actual item
+
+    #     #print(f"Loss seen: {loss.item()}")
+    
+    # # -------------------------------------------
