@@ -5,6 +5,9 @@ from sklearn.model_selection import train_test_split
 from ast import literal_eval
 from torch.utils.data import Dataset, DataLoader
 
+NUM_USERS = 7176
+NUM_ITEMS = 10728
+
 DATA_DIR = "/home/sulay/deep-linear-bandits/kuairec/data/"
 
 def preprocess_krbig_interactions():
@@ -246,6 +249,9 @@ class KRBig(Dataset):
         self.user_cat_feats = user_cat_feats
         self.user_numeric_feats = user_numeric_feats
         self.item_categories = item_categories
+
+        # Useful to precompute for knowing exactly which users appear in the training & validation sets
+        self.unique_user_ids = np.unique(self.user_ids)
 
     def __len__(self):
         return len(self.user_ids)

@@ -2,11 +2,10 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 import deep_linear_bandits.data as dlb_data
+from deep_linear_bandits.data import NUM_USERS, NUM_ITEMS
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-
-NUM_USERS = 7176
-NUM_ITEMS = 10728
+import numpy as np
 
 # Hyperparameters for the two-tower model
 HYPERPARAMS = {
@@ -14,7 +13,7 @@ HYPERPARAMS = {
     # TRAINING HYPERPARAMETERS
     "NUM_NEGATIVES": 256,
     "BATCH_SIZE": 1024,
-    "EPOCHS": 10,
+    "EPOCHS": 50,
 
     # ----------------------------------
     # TOWER ARCHITECTURE HYPERPARAMETERS
@@ -220,9 +219,59 @@ class TwoTower(nn.Module):
 
         return logits / HYPERPARAMS["LOGIT_TEMPERATURE"]
 
+@torch.no_grad()
+def recall_at_k(
+    model: TwoTower,
+    device: torch.device,
+
+    # Features needed to calculate all user embeddings
+    user_ids_t: torch.Tensor,
+    user_cat_feats_t: torch.Tensor,
+    user_numeric_feats_t: torch.Tensor,
+    
+    # Features needed to calculate all item embeddings
+    item_ids_t: torch.Tensor,
+    item_categories_t: torch.Tensor,
+
+    # Known positive interactions already trained on, to mask out for validation
+    train_pos_user_ids: np.ndarray,
+    train_pos_item_ids: np.ndarray,
+
+    # User IDs strictly of users in the validation set
+    val_user_ids: np.ndarray,
+
+    # K values to compute Recall@K for
+    k: list[int] = [10, 50]
+):
+    # Embed all users
+    user_embeddings = model.user_tower(
+        user_ids_t,
+        user_cat_feats_t,
+        user_numeric_feats_t
+    )
+
+    # Embed all items
+    item_embeddings = model.item_tower(
+        item_ids_t,
+        item_categories_t
+    )
+
+    # Compute all user-item similarity scores via dot products
+    scores = user_embeddings @ item_embeddings.T
+
+    # Mask out seen positives from training - no value in recommending an item already seen by the user
+    scores[train_pos_user_ids, train_pos_item_ids] = -torch.inf
+
+    # TODO: finish this!!
+    # 1. Keep only users that are actually in the validation set
+    # 2. Get everyone's topk & access the .indices member for the item IDs
+    # 3. Check overlap with the validation item IDs that the user likes
+    # 4. Sum these and get per-user recall@K
+    # 5. Return these metrics
+
 def generate_two_tower_model(
-        device: torch.device             # Device to train the model on (GPU if available)
-    ) -> TwoTower:                       # The trained two-tower model
+    device: torch.device             # Device to train the model on (GPU if available)
+) -> TwoTower:                       # The trained two-tower model
 
     # Get training & validation (positive) user-item interactions from KuaiRec-Big
     pos_intrs_train, pos_intrs_val = dlb_data.preprocess_krbig_interactions()
@@ -286,7 +335,15 @@ def generate_two_tower_model(
     # mulithreaded DataLoader workers
     item_categories_gpu = item_categories.to(device)
 
+    # Create tensor versions of the user & item features (on GPU) for computing all user & item embeddings
+    # at the end of an epoch; this is used for the corpus-wide (not batch-wide) validation metrics
+    user_ids_t = torch.arange(NUM_USERS, dtype=torch.long, device=device)
+    user_cat_feats_t = torch.tensor(user_cat_feats, device=device)
+    user_numeric_feats_t = torch.tensor(user_numeric_feats, device=device)
+    item_ids_t = torch.arange(NUM_ITEMS, dtype=torch.long, device=device)
+
     # Train model for multiple epochs, tracking both training & validation loss
+    # Additionally track Recall@K as a proper validation metric
     for epoch in range(1, HYPERPARAMS["EPOCHS"] + 1):
         # Switch model into training mode
         model.train()
@@ -334,10 +391,12 @@ def generate_two_tower_model(
             train_loss += loss.item()
         train_loss /= len(train_loader) # Track average per-batch training loss
 
+        # Switch model into evaluation mode: crucial so that dropout is disabled
+        model.eval()
+
         # Check average per-batch validation loss after this epoch
-        model.eval() # Switch model into evaluation mode: crucial so that dropout is disabled
         val_loss = 0
-        with torch.no_grad(): # Not training so don't backprop
+        with torch.no_grad(): # Not training so don't compute gradients for backprop
             for batch in tqdm(
                 val_loader, desc=f"Epoch {epoch}/{HYPERPARAMS["EPOCHS"]} (val)"
             ):
@@ -373,3 +432,18 @@ def generate_two_tower_model(
 
         print(f"Epoch {epoch} average batch loss (train): {train_loss}")
         print(f"Epoch {epoch} average batch loss (val): {val_loss}")
+
+        # Evaluate recall@K performance on the validation set
+        # recall_at_k(
+        #     model, 
+        #     device,
+
+        #     user_ids_t,
+        #     user_cat_feats_t, 
+        #     user_numeric_feats_t,
+        #     item_ids_t,
+        #     item_categories_gpu,
+
+        #     training_set.user_ids,
+        #     training_set.item_ids
+        # )
