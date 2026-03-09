@@ -35,7 +35,7 @@ HYPERPARAMS = {
     "OUTPUT_DIM": 64 # 64-wide embedding preferred for now over 128 or 256 as KuaiRec is quite a small dataset comparatively
 }
 
-K_VALUES = [10, 20, 50] # K values used for computing Recall@K on the held-out validation set
+K_VALUES = [10, 20, 50, 100, 200] # K values used for computing Recall@K on the held-out validation set
 
 class UserTower(nn.Module):
     def __init__(
@@ -231,7 +231,7 @@ def visualise(
     epochs = range(1, HYPERPARAMS["EPOCHS"] + 1)
     colours = plt.rcParams["axes.prop_cycle"].by_key()["color"] # PyPlot default colour cycle
 
-    fig, (ax_loss, ax_recall) = plt.subplots(1, 2, figsize=(18, 8)) # Set up superplot
+    fig, (ax_loss, ax_recall) = plt.subplots(1, 2, figsize=(18, 10)) # Set up superplot
 
     # Plot training vs. validation loss
     ax_loss.plot(epochs, metrics["train_loss"], label="Training Loss")
