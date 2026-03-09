@@ -8,6 +8,7 @@ from tqdm import tqdm
 import numpy as np
 from collections import defaultdict
 import matplotlib.pyplot as plt
+import math
 
 # Hyperparameters for the two-tower model
 HYPERPARAMS = {
@@ -352,7 +353,11 @@ def generate_two_tower_model(
     # Create two-tower model & move to GPU
     model = TwoTower(
         user_cat_sizes,              # Sizes of each categorical user feature
-        [8] * len(user_cat_sizes),   # Embedding widths for each categorical user feature -> TODO!!!!! / make it calc
+        [
+            # Embedding widths for each categorical user feature
+            # Use sqrt heuristic as a starting point; cap at 16 to prevent dominating the 32-wide user ID
+            min(math.ceil(math.sqrt(size)), 16) for size in user_cat_sizes
+        ],
         user_numeric_feats.shape[1], # Number of numeric user features
         item_categories.shape[1]     # Number of item categories
     ).to(device)
