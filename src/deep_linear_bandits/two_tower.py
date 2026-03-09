@@ -484,13 +484,13 @@ def generate_two_tower_model(
             validation_set.item_ids
         )
 
-        print(f"Epoch {epoch} Recall@10 (val): {recall[0]}")
-        print(f"Epoch {epoch} Recall@50 (val): {recall[1]}")
+        print(f"Epoch {epoch} Recall@10 (val, avg. per-user): {recall[0]}")
+        print(f"Epoch {epoch} Recall@50 (val, avg. per-user): {recall[1]}")
 
         # Collate results for later visualisation
         metrics["train_loss"].append(train_loss)
         metrics["val_loss"].append(val_loss)
-        metrics["recall@10"].append()
+        metrics["recall@10"].append(recall[0])
+        metrics["recall@50"].append(recall[1])
     
     # Visualise two-tower training & validation metrics
-    
