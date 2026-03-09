@@ -16,7 +16,7 @@ HYPERPARAMS = {
     # TRAINING HYPERPARAMETERS
     "NUM_NEGATIVES": 256,
     "BATCH_SIZE": 1024,
-    "EPOCHS": 50,
+    "EPOCHS": 100,
 
     # ----------------------------------
     # TOWER ARCHITECTURE HYPERPARAMETERS
@@ -256,7 +256,7 @@ def visualise(
     ax_recall.set_xlabel("Epoch")
     ax_recall.set_ylabel("Mean User Recall@K")
     ax_recall.set_title("Recall@K per Epoch (Validation Set)")
-    ax_recall.legend(fontsize=9, loc='upper left')
+    ax_recall.legend(fontsize=9, loc='lower right')
     ax_recall.grid(True, alpha=0.3)
 
     plt.tight_layout()
