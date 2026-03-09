@@ -6,6 +6,7 @@ from deep_linear_bandits.data import NUM_USERS, NUM_ITEMS
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import numpy as np
+from collections import defaultdict
 
 # Hyperparameters for the two-tower model
 HYPERPARAMS = {
@@ -238,7 +239,11 @@ def recall_at_k(
     train_pos_item_ids: np.ndarray,
 
     # User IDs strictly of users in the validation set
-    val_user_ids: np.ndarray,
+    val_unique_user_ids: np.ndarray,
+
+    # Known positive interactions held out for the validation set, to base Recall@K off
+    vaL_pos_user_ids: np.ndarray,
+    val_pos_item_ids: np.ndarray,
 
     # K values to compute Recall@K for
     k: list[int] = [10, 50]
@@ -262,12 +267,37 @@ def recall_at_k(
     # Mask out seen positives from training - no value in recommending an item already seen by the user
     scores[train_pos_user_ids, train_pos_item_ids] = -torch.inf
 
-    # TODO: finish this!!
-    # 1. Keep only users that are actually in the validation set
-    # 2. Get everyone's topk & access the .indices member for the item IDs
-    # 3. Check overlap with the validation item IDs that the user likes
-    # 4. Sum these and get per-user recall@K
-    # 5. Return these metrics
+    # Generate a validation ground-truth matrix: for each user, have a Boolean for their validation positives
+    val_ground_truth = torch.zeros(NUM_USERS, NUM_ITEMS, dtype=torch.bool, device=device)
+    val_ground_truth[vaL_pos_user_ids, val_pos_item_ids] = True
+
+    # Filter out users that aren't in the validation set (not enough interactions to split on; not used in Recall@K)
+    val_ground_truth = val_ground_truth[val_unique_user_ids]
+    scores = scores[val_unique_user_ids]
+
+    # Get num of validation positives for each user; will be >=1 due to val user filtering
+    val_counts = val_ground_truth.sum(dim=1)
+
+    # Retrieve (new, non-training) items for each user that two-tower has ranked in the top-K
+    # Use the max K value seen; lower K values can get their topk via slicing
+    topk = scores.topk(max(k), dim=1).indices
+
+    # Calculate Recall@K for all K
+    results = []
+    for ki in k:
+        topki = topk[:, :ki]
+
+        # Check how many of these are actually validation positives for each user
+        hit_counts = torch.gather(
+            # i.e. in the ground truth matrix, look at each row; gather only the indices that topk chose
+            input=val_ground_truth,
+            dim=1,
+            index=topki
+        ).sum(dim=1)
+
+        results.append((hit_counts / val_counts).mean().item()) # Calculate recall hit percentage, store result
+
+    return results
 
 def generate_two_tower_model(
     device: torch.device             # Device to train the model on (GPU if available)
@@ -344,6 +374,7 @@ def generate_two_tower_model(
 
     # Train model for multiple epochs, tracking both training & validation loss
     # Additionally track Recall@K as a proper validation metric
+    metrics = defaultdict(list)
     for epoch in range(1, HYPERPARAMS["EPOCHS"] + 1):
         # Switch model into training mode
         model.train()
@@ -434,16 +465,32 @@ def generate_two_tower_model(
         print(f"Epoch {epoch} average batch loss (val): {val_loss}")
 
         # Evaluate recall@K performance on the validation set
-        # recall_at_k(
-        #     model, 
-        #     device,
+        recall = recall_at_k(
+            model, 
+            device,
 
-        #     user_ids_t,
-        #     user_cat_feats_t, 
-        #     user_numeric_feats_t,
-        #     item_ids_t,
-        #     item_categories_gpu,
+            user_ids_t,
+            user_cat_feats_t, 
+            user_numeric_feats_t,
+            item_ids_t,
+            item_categories_gpu,
 
-        #     training_set.user_ids,
-        #     training_set.item_ids
-        # )
+            training_set.user_ids,
+            training_set.item_ids,
+
+            validation_set.unique_user_ids,
+
+            validation_set.user_ids,
+            validation_set.item_ids
+        )
+
+        print(f"Epoch {epoch} Recall@10 (val): {recall[0]}")
+        print(f"Epoch {epoch} Recall@50 (val): {recall[1]}")
+
+        # Collate results for later visualisation
+        metrics["train_loss"].append(train_loss)
+        metrics["val_loss"].append(val_loss)
+        metrics["recall@10"].append()
+    
+    # Visualise two-tower training & validation metrics
+    

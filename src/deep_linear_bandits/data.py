@@ -243,8 +243,9 @@ class KRBig(Dataset):
         user_numeric_feats,
         item_categories
     ):
-        self.user_ids = positive_interactions["user_id"].to_numpy(dtype=np.int64)
-        self.item_ids = positive_interactions["video_id"].to_numpy(dtype=np.int64)
+        # copy=True to prevent PyTorch from throwing precautionary warnings about using these
+        self.user_ids = positive_interactions["user_id"].to_numpy(dtype=np.int64, copy=True)
+        self.item_ids = positive_interactions["video_id"].to_numpy(dtype=np.int64, copy=True)
 
         self.user_cat_feats = user_cat_feats
         self.user_numeric_feats = user_numeric_feats
