@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 import numpy as np
 from collections import defaultdict
+import matplotlib.pyplot as plt
 
 # Hyperparameters for the two-tower model
 HYPERPARAMS = {
@@ -32,6 +33,8 @@ HYPERPARAMS = {
 
     "OUTPUT_DIM": 64 # 64-wide embedding preferred for now over 128 or 256 as KuaiRec is quite a small dataset comparatively
 }
+
+K_VALUES = [10, 20, 50] # K values used for computing Recall@K on the held-out validation set
 
 class UserTower(nn.Module):
     def __init__(
@@ -220,6 +223,45 @@ class TwoTower(nn.Module):
 
         return logits / HYPERPARAMS["LOGIT_TEMPERATURE"]
 
+def visualise(
+        metrics: dict, # Contains train_loss, val_loss & all recall@k e.g. recall@10
+        recall_baselines: list[float]
+) -> None:
+    epochs = range(1, HYPERPARAMS["EPOCHS"] + 1)
+    colours = plt.rcParams["axes.prop_cycle"].by_key()["color"] # PyPlot default colour cycle
+
+    fig, (ax_loss, ax_recall) = plt.subplots(1, 2, figsize=(18, 8)) # Set up superplot
+
+    # Plot training vs. validation loss
+    ax_loss.plot(epochs, metrics["train_loss"], label="Training Loss")
+    ax_loss.plot(epochs, metrics["val_loss"], label="Validation Loss")
+    ax_loss.set_xlabel("Epoch")
+    ax_loss.set_ylabel("Mean per-Batch Cross-Entropy Loss")
+    ax_loss.set_title("Training & Validation Loss per Epoch")
+    ax_loss.legend(fontsize=10, loc='upper right')
+    ax_loss.grid(True, alpha=0.3)
+
+    # Plot Recall@K over epochs with the random policy baselines
+    for i, k in enumerate(K_VALUES):
+        colour = colours[i % len(colours)]
+        ax_recall.plot(epochs, metrics[f"recall@{k}"], color=colour, label=f"Model Recall@{k}")
+        ax_recall.axhline(
+            recall_baselines[i],
+            color=colour,
+            linestyle=":",
+            alpha=0.7,
+            label=f"Random Policy Recall@{k} ({recall_baselines[i]:.4f})"
+        )
+    ax_recall.set_xlabel("Epoch")
+    ax_recall.set_ylabel("Mean User Recall@K")
+    ax_recall.set_title("Recall@K per Epoch (Validation Set)")
+    ax_recall.legend(fontsize=9, loc='upper left')
+    ax_recall.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig('metrics.png')
+    plt.show()
+
 @torch.no_grad()
 def recall_at_k(
     model: TwoTower,
@@ -242,12 +284,11 @@ def recall_at_k(
     val_unique_user_ids: np.ndarray,
 
     # Known positive interactions held out for the validation set, to base Recall@K off
-    vaL_pos_user_ids: np.ndarray,
-    val_pos_item_ids: np.ndarray,
+    val_ground_truth: torch.Tensor,
 
     # K values to compute Recall@K for
-    k: list[int] = [10, 50]
-):
+    k_values: list[int]
+) -> list[int]:
     # Embed all users
     user_embeddings = model.user_tower(
         user_ids_t,
@@ -267,10 +308,6 @@ def recall_at_k(
     # Mask out seen positives from training - no value in recommending an item already seen by the user
     scores[train_pos_user_ids, train_pos_item_ids] = -torch.inf
 
-    # Generate a validation ground-truth matrix: for each user, have a Boolean for their validation positives
-    val_ground_truth = torch.zeros(NUM_USERS, NUM_ITEMS, dtype=torch.bool, device=device)
-    val_ground_truth[vaL_pos_user_ids, val_pos_item_ids] = True
-
     # Filter out users that aren't in the validation set (not enough interactions to split on; not used in Recall@K)
     val_ground_truth = val_ground_truth[val_unique_user_ids]
     scores = scores[val_unique_user_ids]
@@ -280,22 +317,22 @@ def recall_at_k(
 
     # Retrieve (new, non-training) items for each user that two-tower has ranked in the top-K
     # Use the max K value seen; lower K values can get their topk via slicing
-    topk = scores.topk(max(k), dim=1).indices
+    topk_all = scores.topk(max(k_values), dim=1).indices
 
     # Calculate Recall@K for all K
     results = []
-    for ki in k:
-        topki = topk[:, :ki]
+    for k in k_values:
+        topk = topk_all[:, :k]
 
         # Check how many of these are actually validation positives for each user
         hit_counts = torch.gather(
             # i.e. in the ground truth matrix, look at each row; gather only the indices that topk chose
             input=val_ground_truth,
             dim=1,
-            index=topki
+            index=topk
         ).sum(dim=1)
 
-        results.append((hit_counts / val_counts).mean().item()) # Calculate recall hit percentage, store result
+        results.append((hit_counts / val_counts).mean().item()) # Store average recall hit percentage
 
     return results
 
@@ -322,7 +359,6 @@ def generate_two_tower_model(
 
     # Compile model for significantly quicker forward & backward passes
     model.compile()
-
     # Pass training & validation datasets through KRBig for PyTorch batching compatibility
     training_set = dlb_data.KRBig(
         pos_intrs_train,
@@ -372,8 +408,18 @@ def generate_two_tower_model(
     user_numeric_feats_t = torch.tensor(user_numeric_feats, device=device)
     item_ids_t = torch.arange(NUM_ITEMS, dtype=torch.long, device=device)
 
+    # Generate a validation ground-truth matrix: for each user, have a Boolean for their validation positives
+    # This is used for computing Recall@K; does not have non-val users filtered out yet so that training positives
+    # still line up for being filtered out (since otherwise the rows can't be interpreted as user IDs)
+    val_ground_truth = torch.zeros(NUM_USERS, NUM_ITEMS, dtype=torch.bool, device=device)
+    val_ground_truth[
+        validation_set.user_ids, 
+        validation_set.item_ids
+    ] = True
+
     # Train model for multiple epochs, tracking both training & validation loss
     # Additionally track Recall@K as a proper validation metric
+    recall_k_values = [10, 20, 50]
     metrics = defaultdict(list)
     for epoch in range(1, HYPERPARAMS["EPOCHS"] + 1):
         # Switch model into training mode
@@ -480,17 +526,37 @@ def generate_two_tower_model(
 
             validation_set.unique_user_ids,
 
-            validation_set.user_ids,
-            validation_set.item_ids
+            val_ground_truth,
+
+            k_values=K_VALUES
         )
 
-        print(f"Epoch {epoch} Recall@10 (val, avg. per-user): {recall[0]}")
-        print(f"Epoch {epoch} Recall@50 (val, avg. per-user): {recall[1]}")
+        for i, k in enumerate(K_VALUES):
+            print(f"Epoch {epoch} Recall@{k} (val, avg. per-user): {recall[i]}")
+            metrics[f"recall@{k}"].append(recall[i])
 
         # Collate results for later visualisation
         metrics["train_loss"].append(train_loss)
         metrics["val_loss"].append(val_loss)
-        metrics["recall@10"].append(recall[0])
-        metrics["recall@50"].append(recall[1])
     
-    # Visualise two-tower training & validation metrics
+    # Compute expected Recall@K under a purely random recommendation policy, averaged over
+    # all validation users - this is useful when visualising the Recall@K to show that the
+    # model is learning significantly
+    #
+    # 1. Count number of training set positives
+    train_counts = np.bincount(
+        training_set.user_ids, minlength=NUM_USERS
+    )
+
+    # 2. Mask out users that aren't in the validation set
+    train_counts = train_counts[validation_set.unique_user_ids]
+
+    # 3. Calculate purely random baseline (masking out seen training positives)
+    recall_baselines = [
+        # Expected number of hits for K random items is exactly (K / total number of available items)
+        (k / (NUM_ITEMS - train_counts)).mean() # Mean of the per-user baselines
+        for k in K_VALUES
+    ]
+
+    # Visualise two-tower training & validation metrics (via plots)
+    visualise(metrics, recall_baselines)
