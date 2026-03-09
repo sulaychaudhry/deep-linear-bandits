@@ -9,6 +9,7 @@ import numpy as np
 from collections import defaultdict
 import matplotlib.pyplot as plt
 import math
+from datetime import datetime
 
 # Hyperparameters for the two-tower model
 HYPERPARAMS = {
@@ -225,13 +226,13 @@ class TwoTower(nn.Module):
         return logits / HYPERPARAMS["LOGIT_TEMPERATURE"]
 
 def visualise(
-        metrics: dict, # Contains train_loss, val_loss & all recall@k e.g. recall@10
+        metrics: dict, # Contains train_loss, val_loss & all recall@k, ndcg@k
         recall_baselines: list[float]
 ) -> None:
     epochs = range(1, HYPERPARAMS["EPOCHS"] + 1)
     colours = plt.rcParams["axes.prop_cycle"].by_key()["color"] # PyPlot default colour cycle
 
-    fig, (ax_loss, ax_recall) = plt.subplots(1, 2, figsize=(18, 10)) # Set up superplot
+    fig, (ax_loss, ax_recall, ax_ndcg) = plt.subplots(1, 3, figsize=(24, 10)) # Set up superplot
 
     # Plot training vs. validation loss
     ax_loss.plot(epochs, metrics["train_loss"], label="Training Loss")
@@ -259,12 +260,23 @@ def visualise(
     ax_recall.legend(fontsize=9, loc='lower right')
     ax_recall.grid(True, alpha=0.3)
 
+    # Plot NDCG@K over epochs
+    for i, k in enumerate(K_VALUES):
+        colour = colours[i % len(colours)]
+        ax_ndcg.plot(epochs, metrics[f"ndcg@{k}"], color=colour, label=f"NDCG@{k}")
+    ax_ndcg.set_xlabel("Epoch")
+    ax_ndcg.set_ylabel("Mean User NDCG@K")
+    ax_ndcg.set_title("NDCG@K per Epoch (Validation Set)")
+    ax_ndcg.legend(fontsize=10, loc='lower right')
+    ax_ndcg.grid(True, alpha=0.3)
+
     plt.tight_layout()
-    plt.savefig('metrics.png')
+    timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
+    plt.savefig(f'metrics/metrics_{timestamp}.png')
     plt.show()
 
 @torch.no_grad()
-def recall_at_k(
+def compute_val_metrics(
     model: TwoTower,
     device: torch.device,
 
@@ -284,10 +296,10 @@ def recall_at_k(
     # User IDs strictly of users in the validation set
     val_unique_user_ids: np.ndarray,
 
-    # Known positive interactions held out for the validation set, to base Recall@K off
+    # Known positive interactions held out for the validation set
     val_ground_truth: torch.Tensor,
 
-    # K values to compute Recall@K for
+    # K values to compute Recall@K & NDCG@K for
     k_values: list[int]
 ) -> list[int]:
     # Embed all users
@@ -309,7 +321,7 @@ def recall_at_k(
     # Mask out seen positives from training - no value in recommending an item already seen by the user
     scores[train_pos_user_ids, train_pos_item_ids] = -torch.inf
 
-    # Filter out users that aren't in the validation set (not enough interactions to split on; not used in Recall@K)
+    # Filter out users that aren't in the validation set (not enough interactions to split on; not used in the metrics)
     val_ground_truth = val_ground_truth[val_unique_user_ids]
     scores = scores[val_unique_user_ids]
 
@@ -320,22 +332,40 @@ def recall_at_k(
     # Use the max K value seen; lower K values can get their topk via slicing
     topk_all = scores.topk(max(k_values), dim=1).indices
 
-    # Calculate Recall@K for all K
-    results = []
+    # Precompute discounts for each of the top-K items, for computing DCG
+    # DCG = (1 if item relevant else 0) / (log2 (i+1)) where i is the position that the item occupies
+    discount = (1.0 / torch.log2(torch.arange(2, max(k_values) + 2, device=device, dtype=torch.float32)))
+
+    # Calculate Recall@K & NDCG@K for all K
+    recall_results = []
+    ndcg_results = []
     for k in k_values:
         topk = topk_all[:, :k]
 
-        # Check how many of these are actually validation positives for each user
-        hit_counts = torch.gather(
-            # i.e. in the ground truth matrix, look at each row; gather only the indices that topk chose
+        # Relevance matrix: for the chosen top K, what is their binary ground truth?
+        # i.e. 1 if a validation positive for the user, 0 otherwise
+        relevances = torch.gather(
+            # i.e. in the ground truth matrix, look at each row; gather the indices that topk chose
             input=val_ground_truth,
             dim=1,
             index=topk
-        ).sum(dim=1)
+        )
 
-        results.append((hit_counts / val_counts).mean().item()) # Store average recall hit percentage
+        # Recall@K is just: (relevant entries in the top k / total relevant entries) averaged over all users
+        recall_results.append((relevances.sum(dim=1) / val_counts).mean().item())
 
-    return results
+        # DCG@K: sum the (relevance / discount) values for each user's recommended items
+        dcg = (relevances * discount[:k]).sum(dim=1)
+
+        # IDCG@K: ideal DCG if all relevant items are at the top
+        max_hits = val_counts.clamp(max=k).long() # Max hits that each user can have (since might be more than k)
+        cum_discount = discount[:k].cumsum(dim=0) # DCG value for 1 hit at the top, then 2, ... k hits at the top
+        idcg = cum_discount[max_hits - 1] # Index the correct IDCG value for each user
+
+        # NDCG@K is just DCG@K/IDCG@K for each user; IDCG can't be 0 as all users have >=1 positive
+        ndcg_results.append((dcg / idcg).mean().item())
+
+    return recall_results, ndcg_results
 
 def generate_two_tower_model(
     device: torch.device             # Device to train the model on (GPU if available)
@@ -515,8 +545,8 @@ def generate_two_tower_model(
         print(f"Epoch {epoch} average batch loss (train): {train_loss}")
         print(f"Epoch {epoch} average batch loss (val): {val_loss}")
 
-        # Evaluate recall@K performance on the validation set
-        recall = recall_at_k(
+        # Evaluate Recall@K & NDCG@K performance on the validation set
+        recall, ndcg = compute_val_metrics(
             model, 
             device,
 
@@ -539,6 +569,10 @@ def generate_two_tower_model(
         for i, k in enumerate(K_VALUES):
             print(f"Epoch {epoch} Recall@{k} (val, avg. per-user): {recall[i]}")
             metrics[f"recall@{k}"].append(recall[i])
+        
+        for i, k in enumerate(K_VALUES):
+            print(f"Epoch {epoch} NDCG@{k} (val, avg. per-user): {ndcg[i]}")
+            metrics[f"ndcg@{k}"].append(ndcg[i])
 
         # Collate results for later visualisation
         metrics["train_loss"].append(train_loss)
