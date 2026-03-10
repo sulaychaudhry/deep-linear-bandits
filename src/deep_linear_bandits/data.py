@@ -268,3 +268,53 @@ class KRBig(Dataset):
             "user_numeric_feats": self.user_numeric_feats[user_id],
             "item_categories": self.item_categories[item_id]
         }
+
+# Small matrix dataset (used for simulating the bandit)
+class KRSmall:
+    def __init__(self):
+        # Load in the data using Pandas
+        krs_df = pd.read_csv(
+            DATA_DIR + "small_matrix.csv",
+            usecols=["user_id", "video_id", "watch_ratio"]
+        )
+
+        # Convert stored interactions to NumPy arrays
+        self.intr_user_ids = krs_df["user_id"].to_numpy()
+        self.intr_item_ids = krs_df["video_id"].to_numpy()
+        self.intr_signals = (krs_df["watch_ratio"] >= 2.0).to_numpy()
+
+        # Store unique user & item IDs as they will be used often
+        self.unique_user_ids = np.unique(self.intr_user_ids)
+        self.unique_item_ids = np.unique(self.intr_item_ids)
+
+    # Return whole set of users s.t. they're ready to be embedded by the two-tower's user tower
+    # i.e. with their features too, but narrowed down just to be small matrix users
+    def tower_ready_users(self, device: torch.device):
+        (user_cat_feats, _), user_numeric_feats = preprocess_user_features()
+
+        # Narrow down user features to just those of the small matrix users
+        user_cat_feats = user_cat_feats[self.unique_user_ids, :]
+        user_numeric_feats = user_numeric_feats[self.unique_user_ids, :]
+
+        # Convert to tensors as required, since the user features come as NumPy arrays
+        # Additionally ensure they're on the GPU for the towers
+        user_ids = torch.tensor(self.unique_user_ids, dtype=torch.long, device=device)
+        user_cat_feats = torch.tensor(user_cat_feats, dtype=torch.long, device=device)
+        user_numeric_feats = torch.tensor(user_cat_feats, dtype=torch.float32, device=device)
+
+        # To embed a user you need:
+        # - their user ID
+        # - their categorical features
+        # - their numeric features
+        return user_ids, user_cat_feats, user_numeric_feats
+
+    # Similarly for returning the whole set of small matrix items with their features
+    def tower_ready_items(self, device: torch.device):
+        # Filter out the rows of items that aren't in the small matrix, keep all columns (features)
+        # Additionally ensure it's on the GPU for the tower
+        item_categories = preprocess_item_categories()[self.unique_item_ids, :].to(device)
+
+        # To embed an item you need:
+        # - the item ID
+        # - the item categories
+        return self.unique_item_ids, item_categories

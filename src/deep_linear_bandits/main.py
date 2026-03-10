@@ -1,5 +1,6 @@
 import deep_linear_bandits.two_tower as dlb_tt
 import torch
+from deep_linear_bandits.data import KRSmall
 
 USE_PRETRAINED = True
 
@@ -30,5 +31,27 @@ def main():
         model.eval()
     
     # Use inference mode for quickest use of the model after training
+    # Begin the process of freezing this two-tower model & using the embeddings for the bandit
     with torch.inference_mode():
-        pass
+        # Retrieve data for the small matrix
+        small_matrix = KRSmall()
+
+        # Compute all user & item embeddings for the small matrix
+        user_embeddings = model.user_tower(
+            *small_matrix.tower_ready_users(device)
+        )
+        item_embeddings = model.item_tower(
+            *small_matrix.tower_ready_items(device)
+        )
+
+        print(user_embeddings, item_embeddings)
+
+        # 1. process krsmall -> user IDs, item IDs, binary label
+        # 2. for all of those users & items, I need to retrieve features so they can be embedded
+        # 3. randomise user stream:
+        # ---- user comes in, check what items they can actually be served
+        # ---- for those items, apply all bandit policies
+        # ---- return results from bandit policies
+        # ---- observe rewards
+        # 4. track observed reward, then perform next interaction; all part of the simulator
+        # 5. simulator returns results
