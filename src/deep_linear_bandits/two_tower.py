@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 import math
 from datetime import datetime
 
+MODEL_PATH = "models/two_tower.pt" # Where the model's config (constructor args) & state (weights) are saved
+
 # Hyperparameters for the two-tower model
 HYPERPARAMS = {
     # ----------------------------------
@@ -36,7 +38,7 @@ HYPERPARAMS = {
     "OUTPUT_DIM": 64 # 64-wide embedding preferred for now over 128 or 256 as KuaiRec is quite a small dataset comparatively
 }
 
-K_VALUES = [10, 20, 50, 100, 200] # K values used for computing Recall@K on the held-out validation set
+K_VALUES = [10, 50, 100, 200] # K values used for computing Recall@K on the held-out validation set
 
 class UserTower(nn.Module):
     def __init__(
@@ -383,7 +385,7 @@ def generate_two_tower_model(
     # Create two-tower model & move to GPU
     model = TwoTower(
         user_cat_sizes,              # Sizes of each categorical user feature
-        [
+        user_cat_emb_sizes := [
             # Embedding widths for each categorical user feature
             # Use sqrt heuristic as a starting point; cap at 16 to prevent dominating the 32-wide user ID
             min(math.ceil(math.sqrt(size)), 16) for size in user_cat_sizes
@@ -391,6 +393,17 @@ def generate_two_tower_model(
         user_numeric_feats.shape[1], # Number of numeric user features
         item_categories.shape[1]     # Number of item categories
     ).to(device)
+
+    # Save arguments passed to TwoTower constructor to reload the model after it's saved
+    model_config = {
+        "user_cat_input_sizes": user_cat_sizes,
+        "user_cat_emb_sizes": user_cat_emb_sizes,
+        "user_num_numeric_features": user_numeric_feats.shape[1],
+        "num_item_categories": item_categories.shape[1]
+    }
+
+    # Validation Recall@50 will be used as a good stable metric of improving embedding space quality; track best Recall@50 over time; this will be used to pick what model weights to save
+    best_r50 = -1
 
     # Compile model for significantly quicker forward & backward passes
     model.compile()
@@ -574,10 +587,22 @@ def generate_two_tower_model(
             print(f"Epoch {epoch} NDCG@{k} (val, avg. per-user): {ndcg[i]}")
             metrics[f"ndcg@{k}"].append(ndcg[i])
 
+        # If Recall@50 has improved, save the model
+        r50 = metrics["recall@50"][-1]
+        if r50 > best_r50:
+            torch.save({
+                "model_config": model_config,
+                "model_state": model.state_dict()
+            }, MODEL_PATH)
+            best_r50 = r50
+
         # Collate results for later visualisation
         metrics["train_loss"].append(train_loss)
         metrics["val_loss"].append(val_loss)
     
+    print(f"Training complete - best Recall@50: {best_r50}")
+    print(f"This model has been saved to disk at {MODEL_PATH}")
+
     # Compute expected Recall@K under a purely random recommendation policy, averaged over
     # all validation users - this is useful when visualising the Recall@K to show that the
     # model is learning significantly
@@ -599,3 +624,7 @@ def generate_two_tower_model(
 
     # Visualise two-tower training & validation metrics (via plots)
     visualise(metrics, recall_baselines)
+
+    # Return the best model seen in training
+    model.load_state_dict(torch.load(MODEL_PATH)["model_state"])
+    return model
