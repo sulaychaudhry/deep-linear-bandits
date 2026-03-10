@@ -300,7 +300,7 @@ class KRSmall:
         # Additionally ensure they're on the GPU for the towers
         user_ids = torch.tensor(self.unique_user_ids, dtype=torch.long, device=device)
         user_cat_feats = torch.tensor(user_cat_feats, dtype=torch.long, device=device)
-        user_numeric_feats = torch.tensor(user_cat_feats, dtype=torch.float32, device=device)
+        user_numeric_feats = torch.tensor(user_numeric_feats, dtype=torch.float32, device=device)
 
         # To embed a user you need:
         # - their user ID
@@ -314,7 +314,10 @@ class KRSmall:
         # Additionally ensure it's on the GPU for the tower
         item_categories = preprocess_item_categories()[self.unique_item_ids, :].to(device)
 
+        # Convert item IDs to a tensor on GPU for the tower
+        item_ids = torch.tensor(self.unique_item_ids, dtype=torch.long, device=device)
+
         # To embed an item you need:
         # - the item ID
         # - the item categories
-        return self.unique_item_ids, item_categories
+        return item_ids, item_categories

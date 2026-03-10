@@ -44,7 +44,7 @@ def main():
             *small_matrix.tower_ready_items(device)
         )
 
-        print(user_embeddings, item_embeddings)
+        
 
         # 1. process krsmall -> user IDs, item IDs, binary label
         # 2. for all of those users & items, I need to retrieve features so they can be embedded
