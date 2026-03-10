@@ -3,7 +3,7 @@ import torch
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from ast import literal_eval
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 
 NUM_USERS = 7176
 NUM_ITEMS = 10728

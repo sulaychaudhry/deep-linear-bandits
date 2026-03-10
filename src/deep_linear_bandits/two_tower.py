@@ -51,7 +51,7 @@ class UserTower(nn.Module):
 
         # User ID embedding
         self.user_id_emb = nn.Embedding(
-            7176, HYPERPARAMS["USER_ID_EMB_DIM"]
+            NUM_USERS, HYPERPARAMS["USER_ID_EMB_DIM"]
         )
 
         # Separate embedding network per categorical user feature
@@ -120,7 +120,7 @@ class ItemTower(nn.Module):
 
         # Item ID embedding
         self.item_id_emb = nn.Embedding(
-            10728, HYPERPARAMS["ITEM_ID_EMB_DIM"]
+            NUM_ITEMS, HYPERPARAMS["ITEM_ID_EMB_DIM"]
         )
 
         # Embedding the sparse multi-hot categories to a dense representation
@@ -303,7 +303,7 @@ def compute_val_metrics(
 
     # K values to compute Recall@K & NDCG@K for
     k_values: list[int]
-) -> list[int]:
+) -> tuple[list[float], list[float]]:
     # Embed all users
     user_embeddings = model.user_tower(
         user_ids_t,
@@ -476,7 +476,7 @@ def generate_two_tower_model(
         # Train model on all training batches in this epoch; track training loss
         train_loss = 0
         for batch in tqdm(
-            train_loader, desc=f"Epoch {epoch}/{HYPERPARAMS["EPOCHS"]} (train)"
+            train_loader, desc=f"Epoch {epoch}/{HYPERPARAMS['EPOCHS']} (train)"
         ):
             opt.zero_grad() # Zero the optimiser gradients
 
@@ -523,7 +523,7 @@ def generate_two_tower_model(
         val_loss = 0
         with torch.no_grad(): # Not training so don't compute gradients for backprop
             for batch in tqdm(
-                val_loader, desc=f"Epoch {epoch}/{HYPERPARAMS["EPOCHS"]} (val)"
+                val_loader, desc=f"Epoch {epoch}/{HYPERPARAMS['EPOCHS']} (val)"
             ):
                 # Again, uniformly sample negatives (positive objective is strictly from validation set though now)
                 neg_item_ids = torch.randint(

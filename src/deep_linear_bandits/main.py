@@ -1,5 +1,4 @@
 import deep_linear_bandits.two_tower as dlb_tt
-from torch.utils.data import DataLoader
 import torch
 
 USE_PRETRAINED = True
@@ -16,8 +15,8 @@ def main():
     if USE_PRETRAINED:
         print("Loading pre-trained two-tower model...")
 
-        # Use pretrained model config & state in models/two_power.pt
-        checkpoint = torch.load(dlb_tt.MODEL_PATH)
+        # Use pretrained model config & state in models/two_tower.pt
+        checkpoint = torch.load(dlb_tt.MODEL_PATH, map_location=device)
         model = dlb_tt.TwoTower(**checkpoint["model_config"]).to(device)
         model.load_state_dict(checkpoint["model_state"])
         model.compile()
