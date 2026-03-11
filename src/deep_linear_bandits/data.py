@@ -284,8 +284,9 @@ class KRSmall:
         self.intr_signals = (krs_df["watch_ratio"] >= 2.0).to_numpy()
 
         # Store unique user & item IDs as they will be used often
-        self.unique_user_ids = np.unique(self.intr_user_ids)
-        self.unique_item_ids = np.unique(self.intr_item_ids)
+        # Also store the inverse mappings (the interactions but using the new indices of the user & item matrices)
+        self.unique_user_ids, self.intr_new_uids = np.unique(self.intr_user_ids, return_inverse=True)
+        self.unique_item_ids, self.intr_new_iids = np.unique(self.intr_item_ids, return_inverse=True)
 
     # Return whole set of users s.t. they're ready to be embedded by the two-tower's user tower
     # i.e. with their features too, but narrowed down just to be small matrix users
