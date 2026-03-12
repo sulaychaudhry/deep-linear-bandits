@@ -72,7 +72,7 @@ class LinUCB:
         # (A + psi psi^T)_inv = A_inv - (A_inv psi psi^T A_inv) / (1 + psi^T A_inv psi)
         #                     = A_inv - (outer(A_inv psi, A_inv psi)) / (1 + psi^T A_inv psi)
         C = self.A_inv @ psi
-        self.A_inv -= torch.outer(C, C) / (1 + psi.T @ C)
+        self.A_inv -= torch.outer(C, C) / (1 + psi.t() @ C)
 
         # Update b trivially
         self.b += reward * psi
@@ -99,7 +99,7 @@ class Simulator:
 
         # Compute a matrix to indicate all interactions that are 'valid' i.e. don't need masking out
         # This is because despite 99.7% density, some interactions are missing
-        self.available = torch.zeros(SMALL_USERS, SMALL_ITEMS, dtype=torch.bool)
+        self.available = torch.zeros(SMALL_USERS, SMALL_ITEMS, dtype=torch.bool, device=device)
         self.available[small_matrix.intr_new_uids, small_matrix.intr_new_iids] = True
 
         # Also compute a ground truth reward matrix for all positive user-item interactions
