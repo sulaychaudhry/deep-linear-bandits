@@ -275,7 +275,7 @@ class Simulator:
         
     def run(
             self,
-            rounds:int = 100000
+            rounds:int = 10000
     ):
         # Generate the random stream of users
         rng = np.random.default_rng()

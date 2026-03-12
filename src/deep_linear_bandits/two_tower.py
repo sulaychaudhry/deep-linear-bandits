@@ -274,7 +274,7 @@ def visualise(
 
     plt.tight_layout()
     timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
-    plt.savefig(f'metrics/metrics_{timestamp}.png')
+    plt.savefig(f'metrics/two-tower/metrics_{timestamp}.png')
     plt.show()
 
 @torch.no_grad()
