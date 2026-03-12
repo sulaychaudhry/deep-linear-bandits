@@ -32,6 +32,7 @@ def main():
         model.eval()
     
     # Use inference mode for quickest use of the model after training
+    # Compute all user & item embeddings for the small matrix using the two-tower model
     with torch.inference_mode():
         # Retrieve data for the small matrix
         small_matrix = KRSmall()
@@ -44,12 +45,12 @@ def main():
             *small_matrix.tower_ready_items(device)
         )
 
-        # Pass small matrix data & embeddings to the simulator for bandit simulation
-        simulator = Simulator(
-            device,
-            small_matrix,
-            user_embeddings,
-            item_embeddings
-        )
+    # Pass small matrix data to the simulator for bandit simulation
+    simulator = Simulator(
+        device,
+        small_matrix,
+        user_embeddings,
+        item_embeddings
+    )
 
-        simulator.run()
+    simulator.run()
