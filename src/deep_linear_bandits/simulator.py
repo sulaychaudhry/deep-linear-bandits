@@ -36,7 +36,7 @@ class LinUCB:
             contexts: torch.Tensor,    # (1411, 3327, D)
             available: torch.Tensor,   # (1411, 3327)
 
-            alpha: float = 1.0,        # Exploration bonus
+            alpha: float = 0.5,        # Exploration bonus
             lam: float = 1.0           # Ridge regularisation penalty (weight decay)
     ):
         self.device = device
@@ -100,6 +100,145 @@ class LinUCB:
         # Update b trivially
         self.b += reward * psi
 
+class EpsilonGreedy:
+    def __init__(
+            self,
+            device: torch.device,
+            contexts: torch.Tensor,         # (1411, 3327, D)
+            available: torch.Tensor,        # (1411, 3327)
+
+            rng: np.random.BitGenerator,    # RNG instance
+
+            epsilon: float = 0.1,           # Random exploration probability
+            lam: float = 1.0                # Ridge regularisation penalty (weight decay)
+    ):
+        self.device = device
+        self.contexts = contexts
+        self.available = available.detach().clone() # Needs copying so that it can be modified
+        self.epsilon = epsilon
+        self.rng = rng
+
+        # Set up posteriors (same as LinUCB, TS)
+        self.A_inv = (1 / lam) * torch.eye(contexts.shape[-1], device=self.device) # (D, D)
+        self.b = torch.zeros(contexts.shape[-1], device=self.device)               # (D,)
+
+    def recommend(self, user_id:int) -> int:
+        available = self.available[user_id]
+
+        # epsilon% of the time, pick a random available item
+        if self.rng.random() < self.epsilon:
+            # Exploration: pick uniformly from available items
+
+            # Use flatnonzero to efficiently get item IDs (indices) of available items
+            available = np.flatnonzero(available.cpu().numpy())
+            item_id = self.rng.choice(available)
+        else:
+            # Exploitation: pick item with highest estimated reward (wrt the linear regression)
+
+            # Calculate weight estimates & contexts; then apply weights to all contexts to get scores
+            theta = self.A_inv @ self.b # (D,)
+            Psi = self.contexts[user_id] # (3327, D)
+            scores = Psi @ theta
+
+            # Masking out unavailable items before picking one
+            scores[~available] = -torch.inf
+
+            item_id = scores.argmax().item()
+
+        # Mark chosen item as unavailable
+        self.available[user_id, item_id] = False
+
+        return item_id
+    
+    def update(self, user_id:int, item_id:int, reward:int):
+        # Same as LinUCB: update A_inv and b
+
+        # Retrieve context vector for this user-item pair
+        psi = self.contexts[user_id, item_id] # (D,)
+
+        # Update A_inv using Sherman-Morrison
+        C = self.A_inv @ psi
+        self.A_inv -= torch.outer(C, C) / (1 + psi.t() @ C)
+
+        # Update b trivially
+        self.b += reward * psi
+
+class ThompsonSampling:
+    def __init__(
+            self,
+            device: torch.device,
+            contexts: torch.Tensor,    # (1411, 3327, D)
+            available: torch.Tensor,   # (1411, 3327)
+
+            v: float = 1.0,            # Posterior variance scale (higher increases distribution spread, exploration)
+            lam: float = 1.0
+    ):
+        self.device = device
+        self.contexts = contexts
+        self.available = available.detach().clone() # Needs copying so that it can be modified
+        self.v = v
+
+        # Set up posteriors (same as LinUCB, EpsilonGreedy)
+        self.A_inv = (1 / lam) * torch.eye(contexts.shape[-1], device=self.device) # (D, D)
+        self.b = torch.zeros(contexts.shape[-1], device=self.device)               # (D,)
+    
+    def recommend(self, user_id: int) -> int:
+        # Compute (theta = A_inv @ b) where theta is the current best estimate of the linear weights
+        theta = self.A_inv @ self.b # (D,)
+
+        # Retrieve the context vectors (Psi) for this user
+        Psi = self.contexts[user_id] # (3327, D)
+
+        # Thompson Sampling samples its ts_theta from:
+        #       ts_theta ~ N(theta, v^2 A_inv)
+        # where N is a multivariate normal distribution
+        # This is efficiently done in practice through Cholesky decomposition to transform standard normal samples
+        #       ts_theta = theta + Lz       where z ~ N(0, 1)
+        #                                   & L satisfies L L^T = v^2 A_inv
+        # L can be computed through torch.linalg.cholesky
+        # Additionally v^2 can be factored out, giving:
+        #       ts_theta = theta + v * Lz
+        try:
+            L = torch.linalg.cholesky(self.A_inv)
+        except:
+            # Sometimes floating-point imprecision means that that the matrix stops being positive-definite
+            # This is corrected with adding a small value along the diagonal
+            L = torch.linalg.cholesky(
+                self.A_inv + 1e-6 * torch.eye(self.A_inv.shape[0], device=device)
+            )
+        z = torch.randn(self.A_inv.shape[0], device=self.device)
+        theta += self.v * (L @ z)
+
+        # Now score all contexts using the sampled linear parameters
+        scores = Psi @ theta
+
+        # Mask out unavailable items
+        scores[~self.available[user_id]] = -torch.inf
+
+        # Pick item with highest score
+        item_id = scores.argmax().item()
+
+        # Mark chosen item as unavailable
+        self.available[user_id, item_id] = False
+
+        return item_id
+    
+    def update(
+            self,
+            user_id: int,
+            item_id: int,
+            reward: bool
+    ):
+        # Get feature vector (psi) for this specific user-item pair
+        psi = self.contexts[user_id, item_id] # (D,)
+
+        # Update A_inv using Sherman-Morrison
+        C = self.A_inv @ psi
+        self.A_inv -= torch.outer(C, C) / (1 + psi.t() @ C)
+
+        # Update b trivially
+        self.b += reward * psi
+
 class Simulator:
     @torch.inference_mode()
     def __init__(
@@ -126,7 +265,7 @@ class Simulator:
         self.available[small_matrix.intr_new_uids, small_matrix.intr_new_iids] = True
 
         # Also compute a ground truth reward matrix for all positive user-item interactions
-        self.rewards = np.zeros((SMALL_USERS, SMALL_ITEMS), dtype=np.bool)
+        self.rewards = np.zeros((SMALL_USERS, SMALL_ITEMS), dtype=bool)
         self.rewards[small_matrix.intr_new_uids, small_matrix.intr_new_iids] = small_matrix.intr_signals
 
         # Precompute similarity scores for GreedyPolicy
@@ -150,12 +289,28 @@ class Simulator:
         linucb = LinUCB(
             self.device,
             self.contexts,
-            self.available
+            self.available,
+            alpha=0.5
+        )
+        epslgreedy = EpsilonGreedy(
+            self.device,
+            self.contexts,
+            self.available,
+            rng,
+            epsilon=0.1
+        )
+        ts = ThompsonSampling(
+            self.device,
+            self.contexts,
+            self.available,
+            v=1
         )
 
         # Simulate rounds
         linucb_rewards = 0
+        epslgreedy_rewards = 0
         greedy_rewards = 0
+        ts_rewards = 0
         for round in trange(rounds, desc="Simulation rounds"):
             # Retrieve the random user for this round
             user_id = stream[round]
@@ -164,13 +319,25 @@ class Simulator:
             greedy_item_rec = greedy.recommend(user_id)
             greedy_rewards += self.rewards[user_id, greedy_item_rec]
 
-            # Simulate LinUCB
+            # Simulate LinUCB, observe reward & update model
             linucb_item_rec = linucb.recommend(user_id)
             linucb_reward = self.rewards[user_id, linucb_item_rec]
-
-            # Update LinUCB cumulative reward & model
             linucb_rewards += linucb_reward
             linucb.update(user_id, linucb_item_rec, linucb_reward)
+
+            # Simulate EpsilonGreedy, observe reward & update model
+            epslgreedy_item_rec = epslgreedy.recommend(user_id)
+            epslgreedy_reward = self.rewards[user_id, epslgreedy_item_rec]
+            epslgreedy_rewards += epslgreedy_reward
+            epslgreedy.update(user_id, epslgreedy_item_rec, epslgreedy_reward)
+
+            # Simulate TS, observe reward & update model
+            ts_item_rec = ts.recommend(user_id)
+            ts_reward = self.rewards[user_id, ts_item_rec]
+            ts_rewards += ts_reward
+            ts.update(user_id, ts_item_rec, ts_reward)
         
         print(f"Cumulative GreedyPolicy reward over {rounds} rounds: {greedy_rewards} ({greedy_rewards/rounds})")
         print(f"Cumulative LinUCB reward over {rounds} rounds: {linucb_rewards} ({linucb_rewards/rounds})")
+        print(f"Cumulative EpsilonGreedy reward over {rounds} rounds: {epslgreedy_rewards} ({epslgreedy_rewards/rounds})")
+        print(f"Cumulative ThompsonSampling reward over {rounds} rounds: {ts_rewards} ({ts_rewards/rounds})")
