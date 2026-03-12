@@ -204,7 +204,7 @@ class ThompsonSampling:
             # Sometimes floating-point imprecision means that that the matrix stops being positive-definite
             # This is corrected with adding a small value along the diagonal
             L = torch.linalg.cholesky(
-                self.A_inv + 1e-6 * torch.eye(self.A_inv.shape[0], device=device)
+                self.A_inv + 1e-6 * torch.eye(self.A_inv.shape[0], device=self.device)
             )
         z = torch.randn(self.A_inv.shape[0], device=self.device)
         theta += self.v * (L @ z)
