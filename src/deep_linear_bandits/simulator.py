@@ -2,6 +2,7 @@ import numpy as np
 import torch
 from deep_linear_bandits.data import KRSmall
 from tqdm import trange
+import matplotlib.pyplot as plt
 
 SMALL_USERS = 1411
 SMALL_ITEMS = 3327
@@ -28,6 +29,8 @@ class GreedyPolicy:
             if self.available[user_id, item_id]:
                 self.user_next[user_id] = i + 1
                 return item_id
+    
+    def update(self, user_id: int, item_id: int, reward: int): pass
 
 class LinUCB:
     def __init__(
@@ -272,72 +275,72 @@ class Simulator:
         # This can be used immediately to derive the item IDs for GreedyPolicy as it has fixed behaviour
         dot_products = user_embeddings @ item_embeddings.T
         self.greedy_items = torch.sort(dot_products, dim=1, descending=True).indices.cpu().numpy()
-        
+    
+    def visualise(
+            self,
+            labels: list[str],
+            rewards: np.ndarray
+    ):
+        cumulative = np.cumsum(rewards, axis=1) # Get cumulative rewards
+        rounds = np.arange(1, rewards.shape[1] + 1)
+        colours = plt.rcParams["axes.prop_cycle"].by_key()["color"] # PyPlot default colour cycle
+
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 8))
+        fig.suptitle("Simulation: bandit policy comparison")
+
+        # Plot cumulative rewards
+        for i, label in enumerate(labels):
+            ax1.plot(rounds, cumulative[i], color=colours[i % len(colours)], label=label)
+        ax1.set_xlabel("Round")
+        ax1.set_ylabel("Cumulative reward")
+        ax1.set_title("Cumulative rewards")
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+
+        # Plot rolling average
+        window = rewards.shape[1] // 10
+        for i, label in enumerate(labels):
+            # Use convolution approach for rolling average
+            avg = np.convolve(rewards[i].astype(float), np.ones(window) / window, mode='valid')
+            ax2.plot(np.arange(window, rewards.shape[1] + 1), avg, label=label, color=colours[i % len(colours)])
+        ax2.set_xlabel("Round")
+        ax2.set_ylabel("Average reward")
+        ax2.set_title(f"Rolling average reward (window={window})")
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.show()
+
     def run(
             self,
-            rounds:int = 10000
+            rounds:int = 100000
     ):
         # Generate the random stream of users
         rng = np.random.default_rng()
         stream = rng.integers(low=0, high=SMALL_USERS, size=rounds)
 
         # Set up policies
-        greedy = GreedyPolicy(
-            self.greedy_items,
-            self.available.cpu().numpy()
-        )
-        linucb = LinUCB(
-            self.device,
-            self.contexts,
-            self.available,
-            alpha=0.5
-        )
-        epslgreedy = EpsilonGreedy(
-            self.device,
-            self.contexts,
-            self.available,
-            rng,
-            epsilon=0.1
-        )
-        ts = ThompsonSampling(
-            self.device,
-            self.contexts,
-            self.available,
-            v=1
-        )
+        policies = {
+            "greedy": GreedyPolicy(self.greedy_items, self.available.cpu().numpy()),
+
+            "epsilon-greedy": EpsilonGreedy(self.device, self.contexts, self.available, rng, epsilon=0.1),
+            "linucb": LinUCB(self.device, self.contexts, self.available, alpha=0.5),
+            "thompson-sampling": ThompsonSampling(self.device, self.contexts, self.available, v=1)
+        }
 
         # Simulate rounds
-        linucb_rewards = 0
-        epslgreedy_rewards = 0
-        greedy_rewards = 0
-        ts_rewards = 0
+        rewards = np.empty((len(policies), rounds), dtype=bool)
         for round in trange(rounds, desc="Simulation rounds"):
             # Retrieve the random user for this round
             user_id = stream[round]
 
-            # Simulate GreedyPolicy & update reward
-            greedy_item_rec = greedy.recommend(user_id)
-            greedy_rewards += self.rewards[user_id, greedy_item_rec]
+            # Simulate policies & record rewards
+            for i, policy in enumerate(policies.values()):
+                item_rec = policy.recommend(user_id)
+                reward = self.rewards[user_id, item_rec]
 
-            # Simulate LinUCB, observe reward & update model
-            linucb_item_rec = linucb.recommend(user_id)
-            linucb_reward = self.rewards[user_id, linucb_item_rec]
-            linucb_rewards += linucb_reward
-            linucb.update(user_id, linucb_item_rec, linucb_reward)
+                rewards[i, round] = reward
+                policy.update(user_id, item_rec, reward)
 
-            # Simulate EpsilonGreedy, observe reward & update model
-            epslgreedy_item_rec = epslgreedy.recommend(user_id)
-            epslgreedy_reward = self.rewards[user_id, epslgreedy_item_rec]
-            epslgreedy_rewards += epslgreedy_reward
-            epslgreedy.update(user_id, epslgreedy_item_rec, epslgreedy_reward)
-
-            # Simulate TS, observe reward & update model
-            ts_item_rec = ts.recommend(user_id)
-            ts_reward = self.rewards[user_id, ts_item_rec]
-            ts_rewards += ts_reward
-            ts.update(user_id, ts_item_rec, ts_reward)
-        
-        print(f"Cumulative GreedyPolicy reward over {rounds} rounds: {greedy_rewards} ({greedy_rewards/rounds})")
-        print(f"Cumulative LinUCB reward over {rounds} rounds: {linucb_rewards} ({linucb_rewards/rounds})")
-        print(f"Cumulative EpsilonGreedy reward over {rounds} rounds: {epslgreedy_rewards} ({epslgreedy_rewards/rounds})")
-        print(f"Cumulative ThompsonSampling reward over {rounds} rounds: {ts_rewards} ({ts_rewards/rounds})")
+        self.visualise(policies.keys(), rewards)
