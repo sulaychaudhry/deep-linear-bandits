@@ -46,6 +46,7 @@ def main():
 
         # Pass small matrix data & embeddings to the simulator for bandit simulation
         simulator = Simulator(
+            device,
             small_matrix,
             user_embeddings,
             item_embeddings
