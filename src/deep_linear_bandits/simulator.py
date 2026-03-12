@@ -6,6 +6,29 @@ from tqdm import trange
 SMALL_USERS = 1411
 SMALL_ITEMS = 3327
 
+class GreedyPolicy:
+    def __init__(
+            self,
+            greedy_items: np.ndarray,
+            available: np.ndarray[np.bool]
+    ):
+        # Store the top items for each user (calculated by presorting the similarity scores)
+        self.greedy_items = greedy_items
+
+        # For each user, keep track of which indices are next to show
+        self.user_next = np.zeros((SMALL_USERS,), dtype=int)
+
+        # Also keep track of what interactions each user is missing
+        self.available = available
+
+    def recommend(self, user_id: int) -> int:
+        # Recommend the top item that it hasn't shown yet for this user, given that it is available to show
+        for i in range(self.user_next[user_id], SMALL_ITEMS):
+            item_id = self.greedy_items[user_id, i]
+            if self.available[user_id, item_id]:
+                self.user_next[user_id] = i + 1
+                return item_id
+
 class LinUCB:
     def __init__(
             self,
@@ -105,6 +128,11 @@ class Simulator:
         # Also compute a ground truth reward matrix for all positive user-item interactions
         self.rewards = np.zeros((SMALL_USERS, SMALL_ITEMS), dtype=np.bool)
         self.rewards[small_matrix.intr_new_uids, small_matrix.intr_new_iids] = small_matrix.intr_signals
+
+        # Precompute similarity scores for GreedyPolicy
+        # This can be used immediately to derive the item IDs for GreedyPolicy as it has fixed behaviour
+        dot_products = user_embeddings @ item_embeddings.T
+        self.greedy_items = torch.sort(dot_products, dim=1, descending=True).indices.cpu().numpy()
         
     def run(
             self,
@@ -114,7 +142,11 @@ class Simulator:
         rng = np.random.default_rng()
         stream = rng.integers(low=0, high=SMALL_USERS, size=rounds)
 
-        # Set up LinUCB
+        # Set up policies
+        greedy = GreedyPolicy(
+            self.greedy_items,
+            self.available.cpu().numpy()
+        )
         linucb = LinUCB(
             self.device,
             self.contexts,
@@ -123,16 +155,22 @@ class Simulator:
 
         # Simulate rounds
         linucb_rewards = 0
+        greedy_rewards = 0
         for round in trange(rounds, desc="Simulation rounds"):
             # Retrieve the random user for this round
             user_id = stream[round]
 
+            # Simulate GreedyPolicy & update reward
+            greedy_item_rec = greedy.recommend(user_id)
+            greedy_rewards += self.rewards[user_id, greedy_item_rec]
+
             # Simulate LinUCB
-            item_rec = linucb.recommend(user_id)
-            reward = self.rewards[user_id, item_rec]
+            linucb_item_rec = linucb.recommend(user_id)
+            linucb_reward = self.rewards[user_id, linucb_item_rec]
 
             # Update LinUCB cumulative reward & model
-            linucb_rewards += reward
-            linucb.update(user_id, item_rec, reward)
+            linucb_rewards += linucb_reward
+            linucb.update(user_id, linucb_item_rec, linucb_reward)
         
+        print(f"Cumulative GreedyPolicy reward over {rounds} rounds: {greedy_rewards} ({greedy_rewards/rounds})")
         print(f"Cumulative LinUCB reward over {rounds} rounds: {linucb_rewards} ({linucb_rewards/rounds})")
