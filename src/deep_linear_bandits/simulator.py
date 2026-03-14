@@ -434,4 +434,4 @@ class Simulator:
         std_errs =  all_rewards.std(axis=0) / np.sqrt(seed_count)
 
         # Plot results
-        self._visualise(seed_count, labels, mean_rewards, std_errs)
+        self._visualise(seed_count, labels, mean_rewards)
