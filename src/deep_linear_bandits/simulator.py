@@ -310,27 +310,38 @@ class Simulator:
         rounds = np.arange(1, rewards.shape[1] + 1)
         colours = plt.rcParams["axes.prop_cycle"].by_key()["color"] # PyPlot default colour cycle
 
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 8))
-        fig.suptitle("Simulation: bandit policy comparison")
+        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6))
+        fig.suptitle("Simulation: bandit cumulative rewards")
 
-        # Plot cumulative rewards
-        for i, label in enumerate(labels):
-            ax1.plot(rounds, cumulative[i], color=colours[i % len(colours)], label=label)
-        ax1.set_xlabel("Round")
-        ax1.set_ylabel("Cumulative reward")
-        ax1.set_title("Cumulative rewards")
-        ax1.legend()
-        ax1.grid(True, alpha=0.3)
+        # Set up all three subplots
+        for ax in (ax1, ax2, ax3):
+            ax.plot(rounds, cumulative[0], color=colours[0], label="Greedy")
+            ax.plot(rounds, cumulative[1], color=colours[1], label="Random")
+            ax.set_xlabel("Round")
+            ax.set_ylabel("Cumulative reward")
+            ax.legend()
+            ax.grid(True, alpha=0.3)
 
-        # Plot time-averaged reward (to get a sense of learning rate)
-        for i, label in enumerate(labels):
-            avg = cumulative[i] / rounds
-            ax2.plot(rounds, avg, color=colours[i % len(colours)], label=label)
-        ax2.set_xlabel("Round")
-        ax2.set_ylabel("Time-averaged cumulative reward")
-        ax2.set_title("Policy learning rates")
-        ax2.legend()
-        ax2.grid(True, alpha=0.3)
+        # Plot ε-greedy rewards
+        j = 2
+        for i in range(len(labels)):
+            if not labels[i].startswith("ε-greedy"): continue
+            ax1.plot(rounds, cumulative[i], color=colours[j := j+1], label=labels[i])
+            ax.set_title("ε-greedy rewards")
+
+        # Plot LinUCB rewards
+        j = 2
+        for i in range(len(labels)):
+            if not labels[i].startswith("LinUCB"): continue
+            ax1.plot(rounds, cumulative[i], color=colours[j := j+1], label=labels[i])
+            ax.set_title("LinUCB")
+
+        # Plot Thompson Sampling rewards
+        j = 2
+        for i in range(len(labels)):
+            if not labels[i].startswith("TS"): continue
+            ax1.plot(rounds, cumulative[i], color=colours[j := j+1], label=labels[i])
+            ax.set_title("Thompson Sampling")
 
         plt.tight_layout()
         timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
@@ -339,7 +350,7 @@ class Simulator:
 
     def run(
             self,
-            rounds:int = 100000
+            rounds:int = 1000
     ):
         # Generate the random stream of users
         rng = np.random.default_rng()
