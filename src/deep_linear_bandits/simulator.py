@@ -301,21 +301,37 @@ class Simulator:
         dot_products = user_embeddings @ item_embeddings.T
         self.greedy_items = torch.sort(dot_products, dim=1, descending=True).indices.cpu().numpy()
     
-    def visualise(
+    def _visualise(
             self,
+            seed_count: int,
             labels: list[str],
-            rewards: np.ndarray
+            mean_rewards: np.ndarray[float],
+            std_errs: np.ndarray[float]
     ):
-        cumulative = np.cumsum(rewards, axis=1) # Get cumulative rewards
-        rounds = np.arange(1, rewards.shape[1] + 1)
+        # Get cumulative rewards (from the means) & also cumulative standard error
+        cum_reward_means = np.cumsum(mean_rewards, axis=1)
+        cum_reward_stderrs = np.cumsum(std_errs, axis=1)
+        rounds = np.arange(1, mean_rewards.shape[1] + 1)
 
         fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6), sharey=True)
-        fig.suptitle("Simulation: bandit cumulative rewards")
+        fig.suptitle(f"Policy simulation: cumulative bandit rewards (averaged over {seed_count} simulations)")
+
+        # Helper function for plotting standard deviation
+        def plot_w_stderr(ax, i, colour, label, linestyle='-', plot_stderr=False):
+            ax.plot(rounds, cum_reward_means[i], color=colour, label=label, linestyle=linestyle)
+
+            if plot_stderr:
+                ax.fill_between(
+                    rounds,
+                    cum_reward_means[i] - cum_reward_stderrs[i],
+                    cum_reward_means[i] + cum_reward_stderrs[i],
+                    color=colour, alpha=0.15
+                )
 
         # Set up all three subplots
         for ax in (ax1, ax2, ax3):
-            ax.plot(rounds, cumulative[0], color='#444444', label="Greedy", linestyle="--")
-            ax.plot(rounds, cumulative[1], color='#aaaaaa', label="Random", linestyle="--")
+            plot_w_stderr(ax, 0, '#444444', "Greedy", '--')
+            plot_w_stderr(ax, 1, '#aaaaaa', "Random", '--')
             ax.set_xlabel("Round")
             ax.set_ylabel("Cumulative reward")
             ax.grid(True, alpha=0.3)
@@ -324,7 +340,7 @@ class Simulator:
         j, colours = 0, ['#c6d9f7', '#7aaede', '#4878CF', '#1e3f7a']
         for i, label in enumerate(labels):
             if not label.startswith("ε-greedy"): continue
-            ax1.plot(rounds, cumulative[i], color=colours[j], label=label)
+            plot_w_stderr(ax1, i, colours[j], label)
             ax1.set_title("ε-greedy rewards")
             ax1.legend()
             j += 1
@@ -333,7 +349,7 @@ class Simulator:
         j, colours = 0, ['#fddbb4', '#f5a962', '#E8612C', '#a83a10', '#5c1a04']
         for i, label in enumerate(labels):
             if not label.startswith("LinUCB"): continue
-            ax2.plot(rounds, cumulative[i], color=colours[j], label=label)
+            plot_w_stderr(ax2, i, colours[j], label)
             ax2.set_title("LinUCB")
             ax2.legend()
             j += 1
@@ -342,7 +358,7 @@ class Simulator:
         j, colours = 0, ['#c8e6c8', '#6AAB6A', '#2e6b2e', '#0f3310']
         for i, label in enumerate(labels):
             if not label.startswith("TS"): continue
-            ax3.plot(rounds, cumulative[i], color=colours[j], label=label)
+            plot_w_stderr(ax3, i, colours[j], label)
             ax3.set_title("Thompson Sampling")
             ax3.legend()
             j += 1
@@ -351,41 +367,39 @@ class Simulator:
         timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
         plt.savefig(f'metrics/bandit/metrics_{timestamp}.png')
         plt.show()
-
-    def run(
+    
+    def _run_one_seed(
             self,
-            seed_count: int = 1,
-            rounds:int = 10000
-    ):
-        # Generate the random stream of users
+            simulation_num: int,
+            stream: np.ndarray[int],
+            e_greedy_epsilons: list[float],
+            linucb_alphas: list[float],
+            ts_vs: list[float],
+            rounds: int
+    ) -> np.ndarray[bool]:
         rng = np.random.default_rng()
-        stream = rng.integers(low=0, high=SMALL_USERS, size=rounds)
 
         # Set up policies
         policies = {
             "Greedy": GreedyPolicy(self.greedy_items, self.available.cpu().numpy()),
             "Random": RandomPolicy(self.available, rng),
-
-            "ε-greedy (ε=0.01)": EpsilonGreedy(self.device, self.contexts, self.available, rng, epsilon=0.01),
-            "ε-greedy (ε=0.05)": EpsilonGreedy(self.device, self.contexts, self.available, rng, epsilon=0.05),
-            "ε-greedy (ε=0.1)": EpsilonGreedy(self.device, self.contexts, self.available, rng, epsilon=0.1),
-            "ε-greedy (ε=0.2)": EpsilonGreedy(self.device, self.contexts, self.available, rng, epsilon=0.2),
-
-            "LinUCB (α=0.1)": LinUCB(self.device, self.contexts, self.available, alpha=0.1),
-            "LinUCB (α=0.5)": LinUCB(self.device, self.contexts, self.available, alpha=0.5),
-            "LinUCB (α=1.0)": LinUCB(self.device, self.contexts, self.available, alpha=1.0),
-            "LinUCB (α=2.0)": LinUCB(self.device, self.contexts, self.available, alpha=2.0),
-            "LinUCB (α=5.0)": LinUCB(self.device, self.contexts, self.available, alpha=5.0),
-
-            "TS (ʋ=0.5)": ThompsonSampling(self.device, self.contexts, self.available, v=0.5),
-            "TS (ʋ=1.0)": ThompsonSampling(self.device, self.contexts, self.available, v=1.0),
-            "TS (ʋ=2.0)": ThompsonSampling(self.device, self.contexts, self.available, v=2.0),
-            "TS (ʋ=5.0)": ThompsonSampling(self.device, self.contexts, self.available, v=5.0),
         }
-
+        for eps in e_greedy_epsilons:
+            policies[f"ε-greedy (ε={eps})"] = EpsilonGreedy(
+                self.device, self.contexts, self.available, rng, epsilon=eps
+            )
+        for alpha in linucb_alphas:
+            policies[f"LinUCB (α={alpha})"] = LinUCB(
+                self.device, self.contexts, self.available, alpha=alpha
+            )
+        for v in ts_vs:
+            policies[f"TS (ʋ={v})"] = ThompsonSampling(
+                self.device, self.contexts, self.available, v=v
+            )
+        
         # Simulate rounds
         rewards = np.empty((len(policies), rounds), dtype=bool)
-        for round in trange(rounds, desc="Simulation rounds"):
+        for round in trange(rounds, desc=f"Simulation {simulation_num}"):
             # Retrieve the random user for this round
             user_id = stream[round]
 
@@ -396,5 +410,42 @@ class Simulator:
 
                 rewards[i, round] = reward
                 policy.update(user_id, item_rec, reward)
+        
+        return rewards
 
-        self.visualise(policies.keys(), rewards)
+    def run(
+            self,
+            seed_count: int = 10,
+            rounds: int = 10000
+    ):
+        # Generate the random streams of users
+        rng = np.random.default_rng()
+        streams = rng.integers(low=0, high=SMALL_USERS, size=(seed_count, rounds))
+
+        # Bandit policies
+        e_greedy_epsilons = [0.01, 0.05, 0.1, 0.2]
+        linucb_alphas = [0.1, 0.5, 1.0, 2.0, 5.0]
+        ts_vs = [0.5, 1.0, 2.0, 5.0]
+
+        # Greedy & random + all bandit policies
+        labels = (
+            ["Greedy", "Random"]
+            + [f"ε-greedy (ε={e})" for e in e_greedy_epsilons]
+            + [f"LinUCB (α={a})" for a in linucb_alphas]
+            + [f"TS (ʋ={v})" for v in ts_vs]
+        )
+        n_policies = len(labels)
+
+        # Run simulation across seed_count many seeds
+        all_rewards = np.empty((seed_count, n_policies, rounds), dtype=float)
+        for seed_num, stream in enumerate(streams):
+            all_rewards[seed_num] = self._run_one_seed(
+                seed_num, stream, e_greedy_epsilons, linucb_alphas, ts_vs, rounds
+            )
+        
+        # Now calculate means & standard deviations
+        mean_rewards = all_rewards.mean(axis=0)
+        std_errs =  all_rewards.std(axis=0) / np.sqrt(seed_count)
+
+        # Plot results
+        self._visualise(seed_count, labels, mean_rewards, std_errs)
