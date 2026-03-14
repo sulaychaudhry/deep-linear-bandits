@@ -305,33 +305,19 @@ class Simulator:
             self,
             seed_count: int,
             labels: list[str],
-            mean_rewards: np.ndarray[float],
-            std_errs: np.ndarray[float]
+            mean_rewards: np.ndarray[float]
     ):
-        # Get cumulative rewards (from the means) & also cumulative standard error
+        # Get cumulative rewards (from the means)
         cum_reward_means = np.cumsum(mean_rewards, axis=1)
-        cum_reward_stderrs = np.cumsum(std_errs, axis=1)
         rounds = np.arange(1, mean_rewards.shape[1] + 1)
 
         fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6), sharey=True)
         fig.suptitle(f"Policy simulation: cumulative bandit rewards (averaged over {seed_count} simulations)")
 
-        # Helper function for plotting standard deviation
-        def plot_w_stderr(ax, i, colour, label, linestyle='-', plot_stderr=False):
-            ax.plot(rounds, cum_reward_means[i], color=colour, label=label, linestyle=linestyle)
-
-            if plot_stderr:
-                ax.fill_between(
-                    rounds,
-                    cum_reward_means[i] - cum_reward_stderrs[i],
-                    cum_reward_means[i] + cum_reward_stderrs[i],
-                    color=colour, alpha=0.15
-                )
-
         # Set up all three subplots
         for ax in (ax1, ax2, ax3):
-            plot_w_stderr(ax, 0, '#444444', "Greedy", '--')
-            plot_w_stderr(ax, 1, '#aaaaaa', "Random", '--')
+            ax.plot(rounds, cum_reward_means[0], color='#444444', label="Greedy", linestyle='--')
+            ax.plot(rounds, cum_reward_means[1], color='#aaaaaa', label="Random", linestyle='--')
             ax.set_xlabel("Round")
             ax.set_ylabel("Cumulative reward")
             ax.grid(True, alpha=0.3)
@@ -340,7 +326,7 @@ class Simulator:
         j, colours = 0, ['#c6d9f7', '#7aaede', '#4878CF', '#1e3f7a']
         for i, label in enumerate(labels):
             if not label.startswith("ε-greedy"): continue
-            plot_w_stderr(ax1, i, colours[j], label)
+            ax1.plot(rounds, cum_reward_means[i], color=colours[j], label=label)
             ax1.set_title("ε-greedy rewards")
             ax1.legend()
             j += 1
@@ -349,16 +335,16 @@ class Simulator:
         j, colours = 0, ['#fddbb4', '#f5a962', '#E8612C', '#a83a10', '#5c1a04']
         for i, label in enumerate(labels):
             if not label.startswith("LinUCB"): continue
-            plot_w_stderr(ax2, i, colours[j], label)
+            ax2.plot(rounds, cum_reward_means[i], color=colours[j], label=label)
             ax2.set_title("LinUCB")
             ax2.legend()
             j += 1
 
         # Plot Thompson Sampling rewards
-        j, colours = 0, ['#c8e6c8', '#6AAB6A', '#2e6b2e', '#0f3310']
+        j, colours = 0, ['#a8d8a8', '#6AAB6A', '#3d7a3d', '#1e4f1e', '#0a2a0a']
         for i, label in enumerate(labels):
             if not label.startswith("TS"): continue
-            plot_w_stderr(ax3, i, colours[j], label)
+            ax3.plot(rounds, cum_reward_means[i], color=colours[j], label=label)
             ax3.set_title("Thompson Sampling")
             ax3.legend()
             j += 1
@@ -425,7 +411,7 @@ class Simulator:
         # Bandit policies
         e_greedy_epsilons = [0.01, 0.05, 0.1, 0.2]
         linucb_alphas = [0.1, 0.5, 1.0, 2.0, 5.0]
-        ts_vs = [0.5, 1.0, 2.0, 5.0]
+        ts_vs = [0.25, 0.5, 1.0, 2.0, 5.0]
 
         # Greedy & random + all bandit policies
         labels = (
