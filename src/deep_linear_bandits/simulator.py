@@ -308,40 +308,44 @@ class Simulator:
     ):
         cumulative = np.cumsum(rewards, axis=1) # Get cumulative rewards
         rounds = np.arange(1, rewards.shape[1] + 1)
-        colours = plt.rcParams["axes.prop_cycle"].by_key()["color"] # PyPlot default colour cycle
 
-        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6))
+        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6), sharey=True)
         fig.suptitle("Simulation: bandit cumulative rewards")
 
         # Set up all three subplots
         for ax in (ax1, ax2, ax3):
-            ax.plot(rounds, cumulative[0], color=colours[0], label="Greedy")
-            ax.plot(rounds, cumulative[1], color=colours[1], label="Random")
+            ax.plot(rounds, cumulative[0], color='#444444', label="Greedy", linestyle="--")
+            ax.plot(rounds, cumulative[1], color='#aaaaaa', label="Random", linestyle="--")
             ax.set_xlabel("Round")
             ax.set_ylabel("Cumulative reward")
-            ax.legend()
             ax.grid(True, alpha=0.3)
 
         # Plot ε-greedy rewards
-        j = 2
-        for i in range(len(labels)):
-            if not labels[i].startswith("ε-greedy"): continue
-            ax1.plot(rounds, cumulative[i], color=colours[j := j+1], label=labels[i])
-            ax.set_title("ε-greedy rewards")
+        j, colours = 0, ['#c6d9f7', '#7aaede', '#4878CF', '#1e3f7a']
+        for i, label in enumerate(labels):
+            if not label.startswith("ε-greedy"): continue
+            ax1.plot(rounds, cumulative[i], color=colours[j], label=label)
+            ax1.set_title("ε-greedy rewards")
+            ax1.legend()
+            j += 1
 
         # Plot LinUCB rewards
-        j = 2
-        for i in range(len(labels)):
-            if not labels[i].startswith("LinUCB"): continue
-            ax1.plot(rounds, cumulative[i], color=colours[j := j+1], label=labels[i])
-            ax.set_title("LinUCB")
+        j, colours = 0, ['#fddbb4', '#f5a962', '#E8612C', '#a83a10', '#5c1a04']
+        for i, label in enumerate(labels):
+            if not label.startswith("LinUCB"): continue
+            ax2.plot(rounds, cumulative[i], color=colours[j], label=label)
+            ax2.set_title("LinUCB")
+            ax2.legend()
+            j += 1
 
         # Plot Thompson Sampling rewards
-        j = 2
-        for i in range(len(labels)):
-            if not labels[i].startswith("TS"): continue
-            ax1.plot(rounds, cumulative[i], color=colours[j := j+1], label=labels[i])
-            ax.set_title("Thompson Sampling")
+        j, colours = 0, ['#c8e6c8', '#6AAB6A', '#2e6b2e', '#0f3310']
+        for i, label in enumerate(labels):
+            if not label.startswith("TS"): continue
+            ax3.plot(rounds, cumulative[i], color=colours[j], label=label)
+            ax3.set_title("Thompson Sampling")
+            ax3.legend()
+            j += 1
 
         plt.tight_layout()
         timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
@@ -350,7 +354,8 @@ class Simulator:
 
     def run(
             self,
-            rounds:int = 1000
+            seed_count: int = 1,
+            rounds:int = 10000
     ):
         # Generate the random stream of users
         rng = np.random.default_rng()
@@ -361,7 +366,7 @@ class Simulator:
             "Greedy": GreedyPolicy(self.greedy_items, self.available.cpu().numpy()),
             "Random": RandomPolicy(self.available, rng),
 
-            "ε-greedy (ε=0.1)": EpsilonGreedy(self.device, self.contexts, self.available, rng, epsilon=0.01),
+            "ε-greedy (ε=0.01)": EpsilonGreedy(self.device, self.contexts, self.available, rng, epsilon=0.01),
             "ε-greedy (ε=0.05)": EpsilonGreedy(self.device, self.contexts, self.available, rng, epsilon=0.05),
             "ε-greedy (ε=0.1)": EpsilonGreedy(self.device, self.contexts, self.available, rng, epsilon=0.1),
             "ε-greedy (ε=0.2)": EpsilonGreedy(self.device, self.contexts, self.available, rng, epsilon=0.2),
