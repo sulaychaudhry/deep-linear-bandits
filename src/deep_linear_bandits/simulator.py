@@ -339,7 +339,7 @@ class Simulator:
 
     def run(
             self,
-            rounds:int = 10000
+            rounds:int = 100000
     ):
         # Generate the random stream of users
         rng = np.random.default_rng()
@@ -347,12 +347,24 @@ class Simulator:
 
         # Set up policies
         policies = {
-            "greedy": GreedyPolicy(self.greedy_items, self.available.cpu().numpy()),
-            "random": RandomPolicy(self.available, rng),
+            "Greedy": GreedyPolicy(self.greedy_items, self.available.cpu().numpy()),
+            "Random": RandomPolicy(self.available, rng),
 
-            "epsilon-greedy": EpsilonGreedy(self.device, self.contexts, self.available, rng, epsilon=0.1),
-            "linucb": LinUCB(self.device, self.contexts, self.available, alpha=0.5),
-            "thompson-sampling": ThompsonSampling(self.device, self.contexts, self.available, v=1)
+            "ε-greedy (ε=0.1)": EpsilonGreedy(self.device, self.contexts, self.available, rng, epsilon=0.01),
+            "ε-greedy (ε=0.05)": EpsilonGreedy(self.device, self.contexts, self.available, rng, epsilon=0.05),
+            "ε-greedy (ε=0.1)": EpsilonGreedy(self.device, self.contexts, self.available, rng, epsilon=0.1),
+            "ε-greedy (ε=0.2)": EpsilonGreedy(self.device, self.contexts, self.available, rng, epsilon=0.2),
+
+            "LinUCB (α=0.1)": LinUCB(self.device, self.contexts, self.available, alpha=0.1),
+            "LinUCB (α=0.5)": LinUCB(self.device, self.contexts, self.available, alpha=0.5),
+            "LinUCB (α=1.0)": LinUCB(self.device, self.contexts, self.available, alpha=1.0),
+            "LinUCB (α=2.0)": LinUCB(self.device, self.contexts, self.available, alpha=2.0),
+            "LinUCB (α=5.0)": LinUCB(self.device, self.contexts, self.available, alpha=5.0),
+
+            "TS (ʋ=0.5)": ThompsonSampling(self.device, self.contexts, self.available, v=0.5),
+            "TS (ʋ=1.0)": ThompsonSampling(self.device, self.contexts, self.available, v=1.0),
+            "TS (ʋ=2.0)": ThompsonSampling(self.device, self.contexts, self.available, v=2.0),
+            "TS (ʋ=5.0)": ThompsonSampling(self.device, self.contexts, self.available, v=5.0),
         }
 
         # Simulate rounds
