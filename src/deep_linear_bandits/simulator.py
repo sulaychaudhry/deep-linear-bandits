@@ -3,6 +3,7 @@ import torch
 from deep_linear_bandits.data import KRSmall
 from tqdm import trange
 import matplotlib.pyplot as plt
+from datetime import datetime
 
 SMALL_USERS = 1411
 SMALL_ITEMS = 3327
@@ -31,6 +32,30 @@ class GreedyPolicy:
                 return item_id
     
     def update(self, user_id: int, item_id: int, reward: int): pass
+
+class RandomPolicy:
+    def __init__(
+            self,
+            available: torch.Tensor,    # (1411, 3327, D)
+            rng: np.random.BitGenerator # RNG instance
+    ):
+        # Save available items & the RNG
+        self.available = available.detach().clone()
+        self.rng = rng
+    
+    def recommend(self, user_id:int) -> int:
+        available = self.available[user_id]
+
+        # Pick a random available item, using flatnonzero to efficiently get item IDs of available items
+        available = np.flatnonzero(available.cpu().numpy())
+        item_id = self.rng.choice(available)
+
+        # Mark chosen item as unavailable for next time this user is in the stream
+        self.available[user_id, item_id] = False
+
+        return item_id
+    
+    def update(self, user_id:int, item_id:int, reward:int): pass
 
 class LinUCB:
     def __init__(
@@ -297,24 +322,24 @@ class Simulator:
         ax1.legend()
         ax1.grid(True, alpha=0.3)
 
-        # Plot rolling average
-        window = rewards.shape[1] // 10
+        # Plot time-averaged reward (to get a sense of learning rate)
         for i, label in enumerate(labels):
-            # Use convolution approach for rolling average
-            avg = np.convolve(rewards[i].astype(float), np.ones(window) / window, mode='valid')
-            ax2.plot(np.arange(window, rewards.shape[1] + 1), avg, label=label, color=colours[i % len(colours)])
+            avg = cumulative[i] / rounds
+            ax2.plot(rounds, avg, color=colours[i % len(colours)], label=label)
         ax2.set_xlabel("Round")
-        ax2.set_ylabel("Average reward")
-        ax2.set_title(f"Rolling average reward (window={window})")
+        ax2.set_ylabel("Time-averaged cumulative reward")
+        ax2.set_title("Policy learning rates")
         ax2.legend()
         ax2.grid(True, alpha=0.3)
 
         plt.tight_layout()
+        timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
+        plt.savefig(f'metrics/bandit/metrics_{timestamp}.png')
         plt.show()
 
     def run(
             self,
-            rounds:int = 100000
+            rounds:int = 10000
     ):
         # Generate the random stream of users
         rng = np.random.default_rng()
@@ -323,6 +348,7 @@ class Simulator:
         # Set up policies
         policies = {
             "greedy": GreedyPolicy(self.greedy_items, self.available.cpu().numpy()),
+            "random": RandomPolicy(self.available, rng),
 
             "epsilon-greedy": EpsilonGreedy(self.device, self.contexts, self.available, rng, epsilon=0.1),
             "linucb": LinUCB(self.device, self.contexts, self.available, alpha=0.5),
