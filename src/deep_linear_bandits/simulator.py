@@ -301,7 +301,7 @@ class Simulator:
         dot_products = user_embeddings @ item_embeddings.T
         self.greedy_items = torch.sort(dot_products, dim=1, descending=True).indices.cpu().numpy()
     
-    def _visualise(
+    def _visualise_rewards(
             self,
             seed_count: int,
             labels: list[str],
@@ -312,7 +312,10 @@ class Simulator:
         rounds = np.arange(1, mean_rewards.shape[1] + 1)
 
         fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6), sharey=True)
-        fig.suptitle(f"Policy simulation: cumulative bandit rewards (averaged over {seed_count} simulations)")
+        if seed_count > 1:
+            fig.suptitle(f"Policy simulation: cumulative bandit reward (averaged over {seed_count} simulations)")
+        else:
+            fig.suptitle(f"Policy simulation: cumulative bandit reward (shared random seed)")
 
         # Set up all three subplots
         for ax in (ax1, ax2, ax3):
@@ -350,10 +353,66 @@ class Simulator:
             j += 1
 
         plt.tight_layout()
-        timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
+        timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S.%f")
         plt.savefig(f'metrics/bandit/metrics_{timestamp}.png')
         plt.show()
     
+    def _visualise_regrets(
+            self,
+            seed_count: int,
+            labels: list[str],
+            mean_regrets: np.ndarray[float]
+    ):
+        # Get cumulative regrets (from the means)
+        cum_regret_means = np.cumsum(mean_regrets, axis=1)
+        rounds = np.arange(1, mean_regrets.shape[1] + 1)
+
+        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6), sharey=True)
+        if seed_count > 1:
+            fig.suptitle(f"Policy simulation: cumulative bandit regret (averaged over {seed_count} simulations)")
+        else:
+            fig.suptitle(f"Policy simulation: cumulative bandit regret (shared random seed)")
+
+        # Set up all three subplots
+        for ax in (ax1, ax2, ax3):
+            ax.plot(rounds, cum_regret_means[0], color='#444444', label="Greedy", linestyle='--')
+            ax.plot(rounds, cum_regret_means[1], color='#aaaaaa', label="Random", linestyle='--')
+            ax.set_xlabel("Round")
+            ax.set_ylabel("Cumulative regret")
+            ax.grid(True, alpha=0.3)
+
+        # Plot ε-greedy rewards
+        j, colours = 0, ['#c6d9f7', '#7aaede', '#4878CF', '#1e3f7a']
+        for i, label in enumerate(labels):
+            if not label.startswith("ε-greedy"): continue
+            ax1.plot(rounds, cum_regret_means[i], color=colours[j], label=label)
+            ax1.set_title("ε-greedy regret")
+            ax1.legend()
+            j += 1
+
+        # Plot LinUCB rewards
+        j, colours = 0, ['#fddbb4', '#f5a962', '#E8612C', '#a83a10', '#5c1a04']
+        for i, label in enumerate(labels):
+            if not label.startswith("LinUCB"): continue
+            ax2.plot(rounds, cum_regret_means[i], color=colours[j], label=label)
+            ax2.set_title("LinUCB regret")
+            ax2.legend()
+            j += 1
+
+        # Plot Thompson Sampling rewards
+        j, colours = 0, ['#a8d8a8', '#6AAB6A', '#3d7a3d', '#1e4f1e', '#0a2a0a']
+        for i, label in enumerate(labels):
+            if not label.startswith("TS"): continue
+            ax3.plot(rounds, cum_regret_means[i], color=colours[j], label=label)
+            ax3.set_title("Thompson Sampling regret")
+            ax3.legend()
+            j += 1
+
+        plt.tight_layout()
+        timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S.%f")
+        plt.savefig(f'metrics/bandit/metrics_{timestamp}.png')
+        plt.show()
+
     def _run_one_seed(
             self,
             simulation_num: int,
@@ -417,7 +476,7 @@ class Simulator:
 
     def run(
             self,
-            seed_count: int = 10,
+            seed_count: int = 1,
             rounds: int = 10000
     ):
         # Generate the random streams of users
@@ -438,16 +497,18 @@ class Simulator:
         )
         n_policies = len(labels)
 
-        # Run simulation across seed_count many seeds
+        # Run simulation across seed_count many seeds, collect rewards & regrets
         all_rewards = np.empty((seed_count, n_policies, rounds), dtype=float)
+        all_regrets = np.empty((seed_count, n_policies, rounds), dtype=float)
         for seed_num, stream in enumerate(streams):
-            all_rewards[seed_num] = self._run_one_seed(
+            all_rewards[seed_num], all_regrets[seed_num] = self._run_one_seed(
                 seed_num, stream, e_greedy_epsilons, linucb_alphas, ts_vs, rounds
             )
         
-        # Now calculate means & standard deviations
+        # Now calculate means
         mean_rewards = all_rewards.mean(axis=0)
-        std_errs =  all_rewards.std(axis=0) / np.sqrt(seed_count)
+        mean_regrets = all_regrets.mean(axis=0)
 
         # Plot results
-        self._visualise(seed_count, labels, mean_rewards)
+        self._visualise_rewards(seed_count, labels, mean_rewards)
+        self._visualise_regrets(seed_count, labels, mean_regrets)
