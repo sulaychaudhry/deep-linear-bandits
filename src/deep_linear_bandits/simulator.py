@@ -362,7 +362,7 @@ class Simulator:
             linucb_alphas: list[float],
             ts_vs: list[float],
             rounds: int
-    ) -> np.ndarray[bool]:
+    ) -> tuple[np.ndarray[bool], np.ndarray[bool]]:
         rng = np.random.default_rng()
 
         # Set up policies
@@ -383,21 +383,37 @@ class Simulator:
                 self.device, self.contexts, self.available, v=v
             )
         
+        # Calculate the oracle: how many positives exist per user?
+        pos_count = self.rewards.sum(axis=1)
+        pos_count = np.tile(pos_count, (len(policies), 1)) # Separate oracle copy for each policy to update
+
         # Simulate rounds
         rewards = np.empty((len(policies), rounds), dtype=bool)
+        regrets = np.empty((len(policies), rounds), dtype=bool)
         for round in trange(rounds, desc=f"Simulation {simulation_num}"):
             # Retrieve the random user for this round
             user_id = stream[round]
 
             # Simulate policies & record rewards
             for i, policy in enumerate(policies.values()):
+                # Check oracle for this policy: is a reward achievable?
+                oracle_reward = pos_count[i, user_id] > 0
+
+                # Policy chooses item, observe its reward
                 item_rec = policy.recommend(user_id)
                 reward = self.rewards[user_id, item_rec]
 
+                # Record reward & regret
                 rewards[i, round] = reward
+                regrets[i, round] = oracle_reward and not reward # Reward available but not achieved
+
+                # Update oracle
+                if reward: pos_count[i, user_id] -= 1
+
+                # Update policy (allow bandits to update their ridge regression)
                 policy.update(user_id, item_rec, reward)
         
-        return rewards
+        return rewards, regrets
 
     def run(
             self,
