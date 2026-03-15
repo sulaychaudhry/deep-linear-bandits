@@ -336,7 +336,7 @@ class Simulator:
         for i, label in enumerate(labels):
             if not label.startswith("LinUCB"): continue
             ax2.plot(rounds, cum_reward_means[i], color=colours[j], label=label)
-            ax2.set_title("LinUCB")
+            ax2.set_title("LinUCB rewards")
             ax2.legend()
             j += 1
 
@@ -345,7 +345,7 @@ class Simulator:
         for i, label in enumerate(labels):
             if not label.startswith("TS"): continue
             ax3.plot(rounds, cum_reward_means[i], color=colours[j], label=label)
-            ax3.set_title("Thompson Sampling")
+            ax3.set_title("Thompson Sampling rewards")
             ax3.legend()
             j += 1
 
