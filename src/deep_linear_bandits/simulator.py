@@ -375,8 +375,8 @@ class Simulator:
 
         # Set up all three subplots
         for ax in (ax1, ax2, ax3):
-            ax.plot(rounds, cum_regret_means[0], color='#444444', label="Greedy", linestyle='--')
             ax.plot(rounds, cum_regret_means[1], color='#aaaaaa', label="Random", linestyle='--')
+            ax.plot(rounds, cum_regret_means[0], color='#444444', label="Greedy", linestyle='--')
             ax.set_xlabel("Round")
             ax.set_ylabel("Cumulative regret")
             ax.grid(True, alpha=0.3)
@@ -477,7 +477,7 @@ class Simulator:
     def run(
             self,
             seed_count: int = 1,
-            rounds: int = 10000
+            rounds: int = 100000
     ):
         # Generate the random streams of users
         rng = np.random.default_rng()
