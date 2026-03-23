@@ -5,6 +5,7 @@ description = "An investigation into multi-armed bandits (MABs), specifically ge
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "click>=8.3.1",
     "matplotlib>=3.10.0",
     "numpy>=2.4.2",
     "pandas>=3.0.0",
