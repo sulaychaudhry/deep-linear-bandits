@@ -109,7 +109,20 @@ def cli() -> None:
     help='The number of dimensions to embed an item\'s "categories" side feature to.'
 )
 @click.option(
-    '--'
+    '--user-cat-emb-root',
+    type=click.Choice((2, 4)),
+    # Square root preferred over fourth root due to relatively small vocab sizes for each feature - fourth root would be too aggressive
+    default=2,
+    show_default=True,
+    help='Root (square or quartic) to use for determining embedding sizes for each of a user\'s categorical side features from their vocabulary size.'
+)
+@click.option(
+    '--user-cat-emb-cap',
+    type=click.Int(1),
+    # Capped at 16 to prevent any from too heavily dominating the representation vs. user ID
+    default=16,
+    show_default=True,
+    help='Maximum size that any individual user categorical side feature can have for its intermediate embedding (use to prevent side features from dominating the ID embedding).'
 )
 def train_tt(
     save_name: str,
@@ -123,7 +136,9 @@ def train_tt(
     epochs: int,
     num_negatives: int,
     id_emb_dims: int,
-    item_cat_emb_dims: int
+    item_cat_emb_dims: int,
+    user_cat_emb_root: int,
+    user_cat_emb_cap: int
 ) -> None:
     """
     Interface for training the two-tower model.
@@ -141,10 +156,9 @@ def train_tt(
     (user_cat_feats, user_cat_sizes), user_numeric_feats = dlb_data.preprocess_user_features()
 
     # Convert categorical feature sizes to embedding dimensions for each feature
+    power = 1 / user_cat_emb_root
     user_cat_emb_sizes = [
-        # Square root preferred over fourth root due to relatively small vocab sizes for each feature - fourth root would be too aggressive
-        # Capped at 16 to prevent any from too heavily dominating the representation vs. user ID
-        min(math.ceil(math.sqrt(size)), 16) for size in user_cat_sizes
+        min(math.ceil(size ** power), user_cat_emb_cap) for size in user_cat_sizes
     ]
     
     # Get item side features: the item categories
