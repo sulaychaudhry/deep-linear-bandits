@@ -11,33 +11,6 @@ import matplotlib.pyplot as plt
 import math
 from datetime import datetime
 
-MODEL_PATH = "models/two_tower.pt" # Where the model's config (constructor args) & state (weights) are saved
-
-# Hyperparameters for the two-tower model
-HYPERPARAMS = {
-    # ----------------------------------
-    # TRAINING HYPERPARAMETERS
-    "NUM_NEGATIVES": 256,
-    "BATCH_SIZE": 1024,
-    "EPOCHS": 100,
-
-    # ----------------------------------
-    # TOWER ARCHITECTURE HYPERPARAMETERS
-
-    # Embedding dimensions are defaulted to around 32 due to KuaiRec's relatively small size
-    "USER_ID_EMB_DIM": 32,
-    "ITEM_ID_EMB_DIM": 32,
-
-    # There's 31 item categories, and items have 4 categories maximally; an 8-wide embedding might also be appropriate
-    "ITEM_CAT_EMB_DIM": 16,
-
-    "TOWER_HIDDEN_SIZE": 128, # Single hidden fully-connected (nn.Linear) layer of size 128, with a ReLU after
-    "LOGIT_TEMPERATURE": 0.07, # Needed to discriminate fine differences in similarity scores between L2-normalised embeddings
-    "DROPOUT": 0.2, # Helps with overfitting
-
-    "OUTPUT_DIM": 64 # 64-wide embedding preferred for now over 128 or 256 as KuaiRec is quite a small dataset comparatively
-}
-
 K_VALUES = [10, 50, 100, 200] # K values used for computing Recall@K on the held-out validation set
 
 class UserTower(nn.Module):
@@ -46,6 +19,8 @@ class UserTower(nn.Module):
         cat_input_sizes,
         cat_emb_sizes,
         num_numeric_features,
+        
+        id_emb_dims: int = 32,
 
         use_side_features: bool = True,
         hidden_sizes: list[int] = [128],
@@ -59,7 +34,7 @@ class UserTower(nn.Module):
 
         # User ID embedding
         self.user_id_emb = nn.Embedding(
-            NUM_USERS, HYPERPARAMS["USER_ID_EMB_DIM"]
+            NUM_USERS, id_emb_dims
         )
 
         self.use_side_features = use_side_features
@@ -82,13 +57,13 @@ class UserTower(nn.Module):
 
             # Determine how wide the tower needs to be for the combined user input
             input_dim = (
-                HYPERPARAMS["USER_ID_EMB_DIM"] # Width of embedded user ID vector
+                id_emb_dims # Width of embedded user ID vector
                 + sum(cat_emb_sizes) # Width of embedded categorical features
                 + num_numeric_features # Width of numeric features (directly fed to tower)
             )
         else:
             # Tower just needs to accept embedded user ID
-            input_dim = HYPERPARAMS["USER_ID_EMB_DIM"]
+            input_dim = id_emb_dims
 
         # Construct modules for the tower
         modules = []
@@ -159,9 +134,13 @@ class ItemTower(nn.Module):
         self,
         num_item_categories,
 
+        id_emb_dims: int = 32,
+        item_cat_emb_dims: int = 16,
+
         use_side_features: bool = True,
         hidden_sizes: list[int] = [128],
         output_size: int = 64,
+
         use_relu: bool = True,
         dropout: float = 0.2,
         use_l2_norm: bool = True
@@ -173,20 +152,20 @@ class ItemTower(nn.Module):
 
         # Item ID embedding
         self.item_id_emb = nn.Embedding(
-            NUM_ITEMS, HYPERPARAMS["ITEM_ID_EMB_DIM"]
+            NUM_ITEMS, id_emb_dims
         )
 
         if self.use_side_features:
             # Embedding the sparse multi-hot categories to a dense representation
             # This is already a (num_item_categories)-long vector so use nn.Linear directly
             self.cat_emb = nn.Linear(
-                num_item_categories, HYPERPARAMS["ITEM_CAT_EMB_DIM"]
+                num_item_categories, id_emb_dims
             )
 
             # Determine how wide the tower's input size needs to be
-            input_dim = HYPERPARAMS["ITEM_ID_EMB_DIM"] + HYPERPARAMS["ITEM_CAT_EMB_DIM"]
+            input_dim = id_emb_dims + item_cat_emb_dims
         else:
-            input_dim = HYPERPARAMS["ITEM_ID_EMB_DIM"]
+            input_dim = id_emb_dims
 
         # Construct modules for the tower
         modules = []
@@ -253,10 +232,15 @@ class TwoTower(nn.Module):
         user_num_numeric_features,
         num_item_categories,
 
+        # Sizes of intermediate representations
+        id_emb_dims: int = 32,
+        item_cat_emb_dims: int = 16,
+        
         # Whether to use side features or not
         use_side_features: bool = True,
 
         # Hidden layer sizes & output size
+        # Output default is 64 now; 128 or 256 are standard for massive user/item catalogues seen at e.g. Google
         hidden_sizes: list[int] = [128],
         output_size: int = 64,
 
@@ -277,6 +261,8 @@ class TwoTower(nn.Module):
             cat_emb_sizes=user_cat_emb_sizes,
             num_numeric_features=user_num_numeric_features,
 
+            id_emb_dims=id_emb_dims,
+
             use_side_features=use_side_features,
 
             hidden_sizes=hidden_sizes,
@@ -290,6 +276,9 @@ class TwoTower(nn.Module):
         # Set up item tower
         self.item_tower = ItemTower(
             num_item_categories=num_item_categories,
+
+            id_emb_dims=id_emb_dims,
+            item_cat_emb_dims=item_cat_emb_dims,
 
             use_side_features=use_side_features,
             

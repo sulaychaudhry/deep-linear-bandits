@@ -73,6 +73,44 @@ def cli() -> None:
     show_default=True,
     help='Divisor used to scale similarity scores (logits) prior to softmax; smaller values make the model "sharper" i.e. it increases its confidence in small similarity differences.'
 )
+@click.option(
+    '--batch-size',
+    type=click.Choice((512, 1024, 2048)),
+    default=1024,
+    show_default=True,
+    help='Batch size to use for training the two-tower model.'
+)
+@click.option(
+    '--epochs',
+    type=click.IntRange(1),
+    default=100,
+    show_default=True,
+    help='Epochs to train the two-tower model for.'
+)
+@click.option(
+    '--num-negatives',
+    type=click.IntRange(1),
+    default=256,
+    show_default=True,
+    help='The number of uniform negatives to sample per positive interaction.'
+)
+@click.option(
+    '--id-emb-dims',
+    type=click.IntRange(1),
+    default=32, # 32 default since KuaiRec is relatively small
+    show_default=True,
+    help='The number of dimensions to embed user & item IDs to, prior to passing them through their respective towers.'
+)
+@click.option(
+    '--item-cat-emb-dims',
+    type=click.IntRange(1),
+    default=16, # 31 item categories, each item has 4 categories maximally; 8-wide can also be appropriate
+    show_default=True,
+    help='The number of dimensions to embed an item\'s "categories" side feature to.'
+)
+@click.option(
+    '--'
+)
 def train_tt(
     save_name: str,
     side_features: bool,
@@ -80,7 +118,12 @@ def train_tt(
     relu: bool,
     dropout: float,
     l2_norm: bool,
-    logit_temp: float
+    logit_temp: float,
+    batch_size: int,
+    epochs: int,
+    num_negatives: int,
+    id_emb_dims: int,
+    item_cat_emb_dims: int
 ) -> None:
     """
     Interface for training the two-tower model.
@@ -116,6 +159,10 @@ def train_tt(
 
         # Item side features
         "num_item_categories": item_categories.shape[1],
+
+        # Sizes of intermediate representations
+        "id_emb_dims": id_emb_dims,
+        "item_cat_emb_dims": item_cat_emb_dims,
 
         # Whether to actually use these side features or not
         # (They're passed trivially anyway for simplicity & consistency of implementation, but ignored with no effect on model quality)
