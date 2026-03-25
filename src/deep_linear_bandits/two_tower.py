@@ -47,7 +47,12 @@ class UserTower(nn.Module):
         cat_emb_sizes,
         num_numeric_features,
 
-        use_side_features: bool = True
+        use_side_features: bool = True,
+        hidden_sizes: list[int] = [128],
+        output_size: int = 64,
+
+        use_relu: bool = True,
+        dropout: float = 0.2
     ):
         super().__init__() # Needed for registering the nn.Modules correctly
 
@@ -83,13 +88,36 @@ class UserTower(nn.Module):
             # Tower just needs to accept embedded user ID
             input_dim = HYPERPARAMS["USER_ID_EMB_DIM"]
 
-        # The user tower itself
-        self.tower = nn.Sequential(
-            nn.Linear(input_dim, HYPERPARAMS["TOWER_HIDDEN_SIZE"]),
-            nn.ReLU(),
-            nn.Dropout(HYPERPARAMS["DROPOUT"]),
-            nn.Linear(HYPERPARAMS["TOWER_HIDDEN_SIZE"], HYPERPARAMS["OUTPUT_DIM"])
+        # Construct modules for the tower
+        modules = []
+        curr_input_dim = input_dim
+        for i, hsize in enumerate(hidden_sizes):
+            # Chains INPUT -> HIDDEN_1 -> ... -> HIDDEN_N
+            modules.append(
+                nn.Linear(curr_input_dim, hsize)
+            )
+
+            # If using ReLUs to learn nonlinearity, add them
+            if use_relu:
+                modules.append(
+                    nn.ReLU()
+                )
+            
+            # If using Dropouts to avoid overfitting, add them
+            if dropout > 0.0:
+                modules.append(
+                    nn.Dropout(dropout)
+                )
+
+            # Ensures that the output size of the current layer aligns with the input size of the next
+            curr_input_dim = hsize
+        modules.append(
+            # Add final link -> OUTPUT_SIZE
+            nn.Linear(curr_input_dim, output_size)
         )
+
+        # Now create the tower
+        self.tower = nn.Sequential(*modules)
     
     def forward(
         self, 
@@ -127,7 +155,11 @@ class ItemTower(nn.Module):
         self,
         num_item_categories,
 
-        use_side_features: bool = True
+        use_side_features: bool = True,
+        hidden_sizes: list[int] = [128],
+        output_size: int = 64,
+        use_relu: bool = True,
+        dropout: float = 0.2
     ):
         super().__init__()
 
@@ -150,13 +182,32 @@ class ItemTower(nn.Module):
         else:
             input_dim = HYPERPARAMS["ITEM_ID_EMB_DIM"]
 
-        # The item tower itself
-        self.tower = nn.Sequential(
-            nn.Linear(input_dim, HYPERPARAMS["TOWER_HIDDEN_SIZE"]),
-            nn.ReLU(),
-            nn.Dropout(HYPERPARAMS["DROPOUT"]),
-            nn.Linear(HYPERPARAMS["TOWER_HIDDEN_SIZE"], HYPERPARAMS["OUTPUT_DIM"])
+        # Construct modules for the tower
+        modules = []
+        curr_input_dim = input_dim
+        for hsize in hidden_sizes:
+            modules.append(
+                nn.Linear(curr_input_dim, hsize)
+            )
+
+            if use_relu:
+                modules.append(
+                    nn.ReLU()
+                )
+
+            if dropout > 0.0:
+                modules.append(
+                    nn.Dropout(dropout)
+                )
+
+            curr_input_dim = hsize
+
+        modules.append(
+            nn.Linear(curr_input_dim, output_size)
         )
+
+        # Now create the tower
+        self.tower = nn.Sequential(*modules)
     
     def forward(
         self, 
@@ -188,30 +239,53 @@ class ItemTower(nn.Module):
 class TwoTower(nn.Module):
     def __init__(
         self,
+
+        # User & item side features
         user_cat_input_sizes,
         user_cat_emb_sizes,
         user_num_numeric_features,
         num_item_categories,
 
-        use_side_features: bool = True
+        # Whether to use side features or not
+        use_side_features: bool = True,
+
+        # Hidden layer sizes & output size
+        hidden_sizes: list[int] = [128],
+        output_size: int = 64,
+
+        # Additional tower settings
+        use_relu: bool = True,
+        dropout: float = 0.2
     ):
         # Necessary for registering this module correctly
         super().__init__()
 
         # Set up user tower
         self.user_tower = UserTower(
-            user_cat_input_sizes,
-            user_cat_emb_sizes,
-            user_num_numeric_features,
+            cat_input_sizes=user_cat_input_sizes,
+            cat_emb_sizes=user_cat_emb_sizes,
+            num_numeric_features=user_num_numeric_features,
 
-            use_side_features
+            use_side_features=use_side_features,
+
+            hidden_sizes=hidden_sizes,
+            output_size=output_size,
+
+            use_relu=use_relu,
+            dropout=dropout
         )
 
         # Set up item tower
         self.item_tower = ItemTower(
-            num_item_categories,
+            num_item_categories=num_item_categories,
 
-            use_side_features
+            use_side_features=use_side_features,
+            
+            hidden_sizes=hidden_sizes,
+            output_size=output_size,
+
+            use_relu=use_relu,
+            dropout=dropout
         )
     
     def forward(
@@ -405,40 +479,9 @@ def generate_two_tower_model(
     device: torch.device             # Device to train the model on (GPU if available)
 ) -> TwoTower:                       # The trained two-tower model
 
-    # Get training & validation (positive) user-item interactions from KuaiRec-Big
-    pos_intrs_train, pos_intrs_val = dlb_data.preprocess_krbig_interactions()
-
-    # Get user side features: the categorical and numeric user features
-    (user_cat_feats, user_cat_sizes), user_numeric_feats = dlb_data.preprocess_user_features()
-
-    # Get item side features: the item categories
-    item_categories = dlb_data.preprocess_item_categories()
-
-    # Create two-tower model & move to GPU
-    model = TwoTower(
-        user_cat_sizes,              # Sizes of each categorical user feature
-        user_cat_emb_sizes := [
-            # Embedding widths for each categorical user feature
-            # Use sqrt heuristic as a starting point; cap at 16 to prevent dominating the 32-wide user ID
-            min(math.ceil(math.sqrt(size)), 16) for size in user_cat_sizes
-        ],
-        user_numeric_feats.shape[1], # Number of numeric user features
-        item_categories.shape[1]     # Number of item categories
-    ).to(device)
-
-    # Save arguments passed to TwoTower constructor to reload the model after it's saved
-    model_config = {
-        "user_cat_input_sizes": user_cat_sizes,
-        "user_cat_emb_sizes": user_cat_emb_sizes,
-        "user_num_numeric_features": user_numeric_feats.shape[1],
-        "num_item_categories": item_categories.shape[1]
-    }
-
     # Validation Recall@50 will be used as a good stable metric of improving embedding space quality; track best Recall@50 over time; this will be used to pick what model weights to save
     best_r50 = -1
 
-    # Compile model for significantly quicker forward & backward passes
-    model.compile()
     # Pass training & validation datasets through KRBig for PyTorch batching compatibility
     training_set = dlb_data.KRBig(
         pos_intrs_train,

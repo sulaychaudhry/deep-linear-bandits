@@ -4,6 +4,7 @@ from datetime import datetime
 import os
 import shutil
 import math
+import pickle
 
 import deep_linear_bandits.data as dlb_data
 import deep_linear_bandits.two_tower as dlb_tt
@@ -24,18 +25,53 @@ def cli() -> None:
     print(f"PyTorch device: {device}")
 
 @cli.command('train-tt')
-@click.option('--save-name', type=str, default="%d-%m-%Y_%H-%M-%S.%f")
-@click.option('--side-features/--no-side-features', default=True)
+@click.option(
+    '--save-name',
+    type=str,
+    default="%d-%m-%Y_%H-%M-%S.%f",
+    show_default=True,
+    help='Directory name under tt-models/ used to save the model & its results.'
+)
+@click.option(
+    '--side-features/--no-side-features',
+    default=True,
+    show_default=True,
+    help='Enable or disable user/item side features in both towers.'
+)
+@click.option(
+    '--hidden-size',
+    type=click.IntRange(1),
+    multiple=True,
+    default=(128,),
+    show_default=True,
+    help='Repeat for each hidden layer, e.g. --hidden-size 256 --hidden-size 128'
+)
+@click.option(
+    '--relu/--no-relu',
+    default=True,
+    show_default=True,
+    help='Enable/disable the use of ReLU in the towers to learn non-linearity.'
+)
+@click.option(
+    '--dropout',
+    type=float,
+    default=0.2,
+    show_default=True,
+    help='Set training dropout probability to reduce tower overfitting; set to 0.0 to disable dropout.'
+)
 def train_tt(
     save_name: str,
-    use_side_features: bool
+    side_features: bool,
+    hidden_sizes: tuple[int, ...],
+    relu: bool,
+    dropout: float
 ) -> None:
     """
     Interface for training the two-tower model.
     """
 
     # Set up the directory for saving this model & its metrics
-    path = f'tt-models/{save_name}'
+    path = f'tt-models/{save_name}/'
     if os.path.exists(path): shutil.rmtree(path)
     os.makedirs(path)
 
@@ -49,25 +85,49 @@ def train_tt(
     user_cat_emb_sizes = [
         # Square root preferred over fourth root due to relatively small vocab sizes for each feature - fourth root would be too aggressive
         # Capped at 16 to prevent any from too heavily dominating the representation vs. user ID
-        min(math.ceil(math.sqrt(size), 16)) for size in user_cat_sizes
+        min(math.ceil(math.sqrt(size)), 16) for size in user_cat_sizes
     ]
     
     # Get item side features: the item categories
     item_categories = dlb_data.preprocess_item_categories()
     
-    # Create two-tower model & move to GPU
-    # For simplicity of implementation, side feature setup is still passed (trivially) but will be ignored in model construction if use_side_features=False; this does not affect results at all
-    model = dlb_tt.TwoTower(
+    # Set up arguments to pass to the TwoTower constructor; these are saved in a dictionary to ensure that the model can be reloaded after it's saved
+    model_args = {
         # User side features
-        user_cat_input_sizes=user_cat_sizes,
-        user_cat_emb_sizes=user_cat_emb_sizes,
-        user_num_numeric_features=user_numeric_feats.shape[1],
+        "user_cat_input_sizes": user_cat_sizes,
+        "user_cat_emb_sizes": user_cat_emb_sizes,
+        "user_num_numeric_features": user_numeric_feats.shape[1],
 
         # Item side features
-        num_item_categories=item_categories.shape[1],
+        "num_item_categories": item_categories.shape[1],
 
-        use_side_features=use_side_features
-    ).to(device)
+        # Whether to actually use these side features or not
+        # (They're passed trivially anyway for simplicity & consistency of implementation, but ignored with no effect on model quality)
+        "use_side_features": side_features,
+
+        # The hidden layer sizes & output embedding widths
+        "hidden_sizes": list(hidden_sizes),
+        "output_size": 64,
+
+        # Extra tower settings
+        "use_relu": relu,
+        "dropout": dropout
+    }
+
+    print("Arguments passed to model constructor:")
+    for param, arg in model_args.items():
+        print("    " + param + ": " + str(arg))
+
+    # Save the model args for reconstructing the model later
+    with open(path + 'model_args.pkl', 'wb') as f:
+        pickle.dump(model_args, f)
+
+    # Create two-tower model & move to GPU
+    # + compile model for faster forward & backward passes
+    model = dlb_tt.TwoTower(**model_args).to(device)
+    model.compile()
+
+    
 
     
 
