@@ -29,7 +29,7 @@ def cli() -> None:
 @click.option(
     '--save-name',
     type=str,
-    default="%d-%m-%Y_%H-%M-%S.%f",
+    default=datetime.now().strftime("%d-%m-%Y_%H-%M-%S.%f"),
     show_default=True,
     help='Directory name under tt-models/ used to save the model & its results.'
 )
@@ -302,9 +302,6 @@ def train_tt(
     # Save metrics for later visualisation
     with open(path + 'metrics.pkl', 'wb') as f:
         pickle.dump(metrics, f)
-
-
-
 
 import deep_linear_bandits.two_tower as dlb_tt
 from deep_linear_bandits.data import KRSmall
