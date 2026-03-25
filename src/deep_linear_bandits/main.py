@@ -1,5 +1,6 @@
 import click
 import torch
+from torch.utils.data import DataLoader
 from datetime import datetime
 import os
 import shutil
@@ -54,8 +55,7 @@ def cli() -> None:
 )
 @click.option(
     '--dropout',
-    type=float,
-    type=click.FloatRange(min=0.0, max=1.0)
+    type=click.FloatRange(min=0.0, max=1.0),
     default=0.2,
     show_default=True,
     help='Set training dropout probability to reduce tower overfitting; set to 0.0 to disable dropout.'
@@ -75,7 +75,7 @@ def cli() -> None:
 )
 @click.option(
     '--batch-size',
-    type=click.Choice((512, 1024, 2048)),
+    type=click.IntRange(1),
     default=1024,
     show_default=True,
     help='Batch size to use for training the two-tower model.'
@@ -92,7 +92,35 @@ def cli() -> None:
     type=click.IntRange(1),
     default=256,
     show_default=True,
-    help='The number of uniform negatives to sample per positive interaction.'
+    help='The number of uniform negatives to sample per positive interaction (only used with --negative-sampling uniform).'
+)
+@click.option(
+    '--negative-sampling',
+    type=click.Choice(('uniform', 'in-batch')),
+    default='uniform',
+    show_default=True,
+    help='Negative sampling strategy: "uniform" samples K random items per batch; "in-batch" uses other positives in the batch as negatives.'
+)
+@click.option(
+    '--lr',
+    type=click.FloatRange(min=0.0, min_open=True),
+    default=0.001,
+    show_default=True,
+    help='Learning rate for the optimiser used to train the model.'
+)
+@click.option(
+    '--optimiser',
+    type=click.Choice(('adam', 'adamw')),
+    default='adam',
+    show_default=True,
+    help='Optimiser to use: "adam" (no weight decay) or "adamw" (decoupled weight decay).'
+)
+@click.option(
+    '--data-workers',
+    type=click.IntRange(1),
+    default=4,
+    show_default=True,
+    help='Number of workers (concurrent CPU threads) to use for dispatching training & validation batches, each.'
 )
 @click.option(
     '--id-emb-dims',
@@ -110,15 +138,15 @@ def cli() -> None:
 )
 @click.option(
     '--user-cat-emb-root',
-    type=click.Choice((2, 4)),
+    type=click.Choice(('2', '4')),
     # Square root preferred over fourth root due to relatively small vocab sizes for each feature - fourth root would be too aggressive
-    default=2,
+    default='2',
     show_default=True,
     help='Root (square or quartic) to use for determining embedding sizes for each of a user\'s categorical side features from their vocabulary size.'
 )
 @click.option(
     '--user-cat-emb-cap',
-    type=click.Int(1),
+    type=click.IntRange(1),
     # Capped at 16 to prevent any from too heavily dominating the representation vs. user ID
     default=16,
     show_default=True,
@@ -127,7 +155,7 @@ def cli() -> None:
 def train_tt(
     save_name: str,
     side_features: bool,
-    hidden_sizes: tuple[int, ...],
+    hidden_size: tuple[int, ...],
     relu: bool,
     dropout: float,
     l2_norm: bool,
@@ -135,6 +163,10 @@ def train_tt(
     batch_size: int,
     epochs: int,
     num_negatives: int,
+    negative_sampling: str,
+    lr: float,
+    optimiser: str,
+    data_workers: int,
     id_emb_dims: int,
     item_cat_emb_dims: int,
     user_cat_emb_root: int,
@@ -156,7 +188,7 @@ def train_tt(
     (user_cat_feats, user_cat_sizes), user_numeric_feats = dlb_data.preprocess_user_features()
 
     # Convert categorical feature sizes to embedding dimensions for each feature
-    power = 1 / user_cat_emb_root
+    power = 1 / int(user_cat_emb_root)
     user_cat_emb_sizes = [
         min(math.ceil(size ** power), user_cat_emb_cap) for size in user_cat_sizes
     ]
@@ -183,7 +215,7 @@ def train_tt(
         "use_side_features": side_features,
 
         # The hidden layer sizes & output embedding widths
-        "hidden_sizes": list(hidden_sizes),
+        "hidden_sizes": list(hidden_size),
         "output_size": 64,
 
         # Extra tower settings
@@ -206,9 +238,70 @@ def train_tt(
     model = dlb_tt.TwoTower(**model_args).to(device)
     model.compile()
 
-    
+    # Pass training & validation datasets through KRBig for PyTorch batching compatibility
+    training_set = dlb_data.KRBig(
+        pos_intrs_train, 
+        user_cat_feats, 
+        user_numeric_feats, 
+        item_categories
+    )
+    validation_set = dlb_data.KRBig(
+        pos_intrs_val, 
+        user_cat_feats, 
+        user_numeric_feats, 
+        item_categories
+    )
 
-    
+    # Set up DataLoaders for dispatching training & validation batches
+    # Use multithreading & pinned memory (between RAM & CUDA) for much quicker retrieval
+    train_loader = DataLoader(
+        training_set,
+        batch_size=batch_size,
+        shuffle=True, # Shuffle per epoch to reduce it from fitting on data order
+        num_workers=data_workers,
+        pin_memory=True,
+        persistent_workers=True
+    )
+    val_loader = DataLoader(
+        validation_set,
+        batch_size=batch_size,
+        shuffle=False, # Don't shuffle per-epoch for validation, not necessary & has been shuffled during data split
+        num_workers=data_workers,
+        pin_memory=True,
+        persistent_workers=True
+    )
+
+    # Train the two-tower model; returns per-epoch metrics for later visualisation
+    metrics, model = dlb_tt.train_two_tower(
+        model=model,
+        device=device,
+
+        train_loader=train_loader,
+        val_loader=val_loader,
+
+        training_set=training_set,
+        validation_set=validation_set,
+
+        item_categories=item_categories,
+        user_cat_feats=user_cat_feats,
+        user_numeric_feats=user_numeric_feats,
+
+        epochs=epochs,
+        num_negatives=num_negatives,
+        negative_sampling=negative_sampling,
+        lr=lr,
+        optimiser=(
+            torch.optim.Adam(model.parameters(), lr=lr)
+            if optimiser=='adam' else
+            torch.optim.AdamW(model.parameters(), lr=lr)
+        )
+    )
+
+    print(metrics)
+
+    # Save metrics for later visualisation
+    with open(path + 'metrics.pkl', 'wb') as f:
+        pickle.dump(metrics, f)
 
 
 

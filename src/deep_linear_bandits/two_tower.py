@@ -478,53 +478,48 @@ def compute_val_metrics(
 
     return recall_results, ndcg_results
 
-def generate_two_tower_model(
-    device: torch.device             # Device to train the model on (GPU if available)
-) -> TwoTower:                       # The trained two-tower model
+def train_two_tower(
+    model: TwoTower,
+    device: torch.device,
 
-    # Validation Recall@50 will be used as a good stable metric of improving embedding space quality; track best Recall@50 over time; this will be used to pick what model weights to save
-    best_r50 = -1
+    train_loader: DataLoader,
+    val_loader: DataLoader,
 
-    # Pass training & validation datasets through KRBig for PyTorch batching compatibility
-    training_set = dlb_data.KRBig(
-        pos_intrs_train,
-        user_cat_feats,
-        user_numeric_feats,
-        item_categories
-    )
-    validation_set = dlb_data.KRBig(
-        pos_intrs_val,
-        user_cat_feats,
-        user_numeric_feats,
-        item_categories
-    )
+    training_set: dlb_data.KRBig,
+    validation_set: dlb_data.KRBig,
 
-    # Set up DataLoaders for dispatching training & validation batches
-    # Use multithreading & pinned memory (between RAM & CUDA) for much quicker retrieval
-    train_loader = DataLoader(
-        training_set,
-        batch_size=HYPERPARAMS["BATCH_SIZE"],
-        shuffle=True, # Shuffle per epoch to reduce it from fitting on data order
-        num_workers=4,
-        pin_memory=True,
-        persistent_workers=True
-    )
-    val_loader = DataLoader(
-        validation_set,
-        batch_size=HYPERPARAMS["BATCH_SIZE"],
-        shuffle=False, # Don't shuffle per-epoch for validation, not necessary & has been shuffled during data split
-        num_workers=4,
-        pin_memory=True,
-        persistent_workers=True
-    )
+    item_categories: torch.Tensor,      # CPU tensor (NUM_ITEMS, num_categories)
+    user_cat_feats,                     # numpy (NUM_USERS, num_cat_feats)
+    user_numeric_feats,                 # numpy (NUM_USERS, num_numeric_feats)
 
-    # Use CrossEntropyLoss as expected; use Adam with defaults to optimise the model
+    epochs: int,
+    num_negatives: int,
+    negative_sampling: str,             # 'uniform' or 'in-batch'
+    lr: float,
+    optimiser: torch.optim.Optimizer    # Adam or AdamW
+) -> tuple[dict, TwoTower]:
+    """
+    Train the two-tower model for the given number of epochs, tracking training & validation loss alongside corpus-wide Recall@K and NDCG@K on the validation set each epoch.
+
+    Returns:
+        - dict of per-epoch metric lists
+            - ['train_loss']
+            - ['val_loss']
+            - ['recall@{k}']
+            - ['ndcg@{k}']
+        - the best state of the passed model (by Recall@50)
+    """
+
+    # Track best validation Recall@50 to decide when to save the model, + save the model by its weights as that's all you need to revert it
+    best_r50 = -1.0
+    best_weights = model.state_dict()
+
+    # Use CrossEntropyLoss as the training objective
     loss_fn = nn.CrossEntropyLoss()
-    opt = torch.optim.Adam(model.parameters())
 
     # The item categories should be on the GPU for quick negative item sampling (they take up
     # ~1MB, negligible); make a copy for this, as the original needs to stay on the CPU for
-    # mulithreaded DataLoader workers
+    # multithreaded DataLoader workers
     item_categories_gpu = item_categories.to(device)
 
     # Create tensor versions of the user & item features (on GPU) for computing all user & item embeddings
@@ -539,57 +534,75 @@ def generate_two_tower_model(
     # still line up for being filtered out (since otherwise the rows can't be interpreted as user IDs)
     val_ground_truth = torch.zeros(NUM_USERS, NUM_ITEMS, dtype=torch.bool, device=device)
     val_ground_truth[
-        validation_set.user_ids, 
+        validation_set.user_ids,
         validation_set.item_ids
     ] = True
 
     # Train model for multiple epochs, tracking both training & validation loss
-    # Additionally track Recall@K as a proper validation metric
-    recall_k_values = [10, 20, 50]
+    # Additionally track Recall@K & NDCG@K as proper validation metrics
     metrics = defaultdict(list)
-    for epoch in range(1, HYPERPARAMS["EPOCHS"] + 1):
+    for epoch in range(1, epochs + 1):
         # Switch model into training mode
         model.train()
 
         # Train model on all training batches in this epoch; track training loss
         train_loss = 0
         for batch in tqdm(
-            train_loader, desc=f"Epoch {epoch}/{HYPERPARAMS['EPOCHS']} (train)"
+            train_loader, desc=f"Epoch {epoch}/{epochs} (train)"
         ):
-            opt.zero_grad() # Zero the optimiser gradients
+            optimiser.zero_grad()
 
-            # The batch contains positive user-item interactions sequentially, but doesn't give us negatives
-            # These are sampled uniformly; in-batch negative sampling is seen to perform really poorly on KuaiRec
-            neg_item_ids = torch.randint(
-                0, NUM_ITEMS, (HYPERPARAMS["NUM_NEGATIVES"],), device=device
-            )
-            neg_item_categories = item_categories_gpu[neg_item_ids]
-            
-            # Calculate similarities (logits) between users and their positive items + the K negatives
-            logits = model(
-                # User features from the batch
-                batch["user_id"].to(device),
-                batch["user_cat_feats"].to(device),
-                batch["user_numeric_feats"].to(device),
+            if negative_sampling == 'in-batch':
+                # In-batch negative sampling exists as a comparison point, but uniform negatives are seen to perform much better on KuaiRec
+                # TwoTower is built for uniform negatives; this simply does the work of TwoTower's forward pass manually if it was using in-batch negative sampling -> better than writing two side-by-side TwoTower implementations, esp. given that in-batch negative sampling is not used for actual high-quality results
 
-                # Positive item features from the batch
-                batch["item_id"].to(device),
-                batch["item_categories"].to(device),
+                # In-batch negative sampling: each user's positive item acts as a negative for all other users
+                user_embs = model.user_tower(
+                    batch["user_id"].to(device),
+                    batch["user_cat_feats"].to(device),
+                    batch["user_numeric_feats"].to(device)
+                )  # (B, D)
+                pos_item_embs = model.item_tower(
+                    batch["item_id"].to(device),
+                    batch["item_categories"].to(device)
+                )  # (B, D)
 
-                # Uniformly sampled negative items
-                neg_item_ids,
-                neg_item_categories
-            )
+                # Full similarity matrix: each user scored against all items in the batch
+                logits = (user_embs @ pos_item_embs.T) / model.logit_temp  # (B, B)
 
-            # The correct (positive) item for each user has the first logit; i.e. the 0th index on each row
-            target = torch.zeros(
-                logits.size(0), dtype=torch.long, device=device
-            )
+                # The positive for user i is item i (on the diagonal)
+                target = torch.arange(logits.size(0), device=device)
+            else:
+                # The batch contains positive user-item interactions sequentially, but doesn't give us negatives
+                # These are sampled uniformly; in-batch negative sampling is seen to perform poorly in comparison on KuaiRec
+                neg_item_ids = torch.randint(
+                    0, NUM_ITEMS, (num_negatives,), device=device
+                )
+                neg_item_categories = item_categories_gpu[neg_item_ids]
+
+                # Calculate similarities (logits) between users and their positive items + the K negatives
+                logits = model(
+                    user_ids=batch["user_id"].to(device),
+                    pos_item_ids=batch["item_id"].to(device),
+                    neg_item_ids=neg_item_ids,
+
+                    user_cat_feats=batch["user_cat_feats"].to(device),
+                    user_numeric_feats=batch["user_numeric_feats"].to(device),
+
+                    pos_item_categories=batch["item_categories"].to(device),
+                    neg_item_categories=neg_item_categories
+                )
+
+                # The correct (positive) item for each user has the first logit; i.e. the 0th index on each row
+                target = torch.zeros(
+                    logits.size(0), dtype=torch.long, device=device
+                )
+
             loss = loss_fn(logits, target)
 
             # Propagate loss backward, use optimiser to update model weights
             loss.backward()
-            opt.step()
+            optimiser.step()
 
             train_loss += loss.item()
         train_loss /= len(train_loader) # Track average per-batch training loss
@@ -601,35 +614,52 @@ def generate_two_tower_model(
         val_loss = 0
         with torch.no_grad(): # Not training so don't compute gradients for backprop
             for batch in tqdm(
-                val_loader, desc=f"Epoch {epoch}/{HYPERPARAMS['EPOCHS']} (val)"
+                val_loader, desc=f"Epoch {epoch}/{epochs} (val)"
             ):
-                # Again, uniformly sample negatives (positive objective is strictly from validation set though now)
-                neg_item_ids = torch.randint(
-                    0, NUM_ITEMS, (HYPERPARAMS["NUM_NEGATIVES"],), device=device
-                )
-                neg_item_categories = item_categories_gpu[neg_item_ids]
+                if negative_sampling == 'in-batch':
+                    # Again, the manual in-batch neg sampling logic
 
-                # Compute similarities between user embedding & positive item embedding + uniform negatives
-                logits = model(
-                    # User features from the batch
-                    batch["user_id"].to(device),
-                    batch["user_cat_feats"].to(device),
-                    batch["user_numeric_feats"].to(device),
+                    # Embed users & their positives
+                    user_embs = model.user_tower(
+                        batch["user_id"].to(device),
+                        batch["user_cat_feats"].to(device),
+                        batch["user_numeric_feats"].to(device)
+                    )
+                    pos_item_embs = model.item_tower(
+                        batch["item_id"].to(device),
+                        batch["item_categories"].to(device)
+                    )
 
-                    # Positive item features from the batch
-                    batch["item_id"].to(device),
-                    batch["item_categories"].to(device),
+                    # Calculate dot product (similarity score) between all users and all positive items
+                    logits = (user_embs @ pos_item_embs.T) / model.logit_temp
 
-                    # Uniformly sampled negative items
-                    neg_item_ids,
-                    neg_item_categories
-                )
+                    # The target is for each user to be assigned (classified) the item on the diagonal, as that is their actual positive
+                    target = torch.arange(logits.size(0), device=device)
+                else:
+                    # Again, uniformly sample negatives (positive objective is strictly from validation set though now)
+                    neg_item_ids = torch.randint(
+                        0, NUM_ITEMS, (num_negatives,), device=device
+                    )
+                    neg_item_categories = item_categories_gpu[neg_item_ids]
 
-                # Same target as in training: the first item is the positive one
-                target = torch.zeros(
-                    logits.size(0), dtype=torch.long, device=device
-                )
-                
+                    # Compute similarities between user embedding & positive item embedding + uniform negatives
+                    logits = model(
+                        user_ids=batch["user_id"].to(device),
+                        pos_item_ids=batch["item_id"].to(device),
+                        neg_item_ids=neg_item_ids,
+
+                        user_cat_feats=batch["user_cat_feats"].to(device),
+                        user_numeric_feats=batch["user_numeric_feats"].to(device),
+
+                        pos_item_categories=batch["item_categories"].to(device),
+                        neg_item_categories=neg_item_categories
+                    )
+
+                    # Same target as in training: the first item is the positive one
+                    target = torch.zeros(
+                        logits.size(0), dtype=torch.long, device=device
+                    )
+
                 val_loss += loss_fn(logits, target).item()
             val_loss /= len(val_loader) # Track per-batch average loss
 
@@ -638,11 +668,11 @@ def generate_two_tower_model(
 
         # Evaluate Recall@K & NDCG@K performance on the validation set
         recall, ndcg = compute_val_metrics(
-            model, 
+            model,
             device,
 
             user_ids_t,
-            user_cat_feats_t, 
+            user_cat_feats_t,
             user_numeric_feats_t,
             item_ids_t,
             item_categories_gpu,
@@ -660,7 +690,7 @@ def generate_two_tower_model(
         for i, k in enumerate(K_VALUES):
             print(f"Epoch {epoch} Recall@{k} (val, avg. per-user): {recall[i]}")
             metrics[f"recall@{k}"].append(recall[i])
-        
+
         for i, k in enumerate(K_VALUES):
             print(f"Epoch {epoch} NDCG@{k} (val, avg. per-user): {ndcg[i]}")
             metrics[f"ndcg@{k}"].append(ndcg[i])
@@ -668,18 +698,26 @@ def generate_two_tower_model(
         # If Recall@50 has improved, save the model
         r50 = metrics["recall@50"][-1]
         if r50 > best_r50:
-            torch.save({
-                "model_config": model_config,
-                "model_state": model.state_dict()
-            }, MODEL_PATH)
-            best_r50 = r50
+            best_weights = model.state_dict()
 
         # Collate results for later visualisation
         metrics["train_loss"].append(train_loss)
         metrics["val_loss"].append(val_loss)
-    
+
     print(f"Training complete - best Recall@50: {best_r50}")
-    print(f"This model has been saved to disk at {MODEL_PATH}")
+
+    # Load the best model weights back in
+    model.load_state_dict(
+        best_weights
+    )
+
+    return metrics, model
+
+# Old training method being refactored
+def generate_two_tower_model(
+    device: torch.device             # Device to train the model on (GPU if available)
+) -> TwoTower:                       # The trained two-tower model
+
 
     # Compute expected Recall@K under a purely random recommendation policy, averaged over
     # all validation users - this is useful when visualising the Recall@K to show that the
