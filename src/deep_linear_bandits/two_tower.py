@@ -159,7 +159,7 @@ class ItemTower(nn.Module):
             # Embedding the sparse multi-hot categories to a dense representation
             # This is already a (num_item_categories)-long vector so use nn.Linear directly
             self.cat_emb = nn.Linear(
-                num_item_categories, id_emb_dims
+                num_item_categories, item_cat_emb_dims
             )
 
             # Determine how wide the tower's input size needs to be
