@@ -45,7 +45,9 @@ class UserTower(nn.Module):
         self,
         cat_input_sizes,
         cat_emb_sizes,
-        num_numeric_features
+        num_numeric_features,
+
+        use_side_features: bool = True
     ):
         super().__init__() # Needed for registering the nn.Modules correctly
 
@@ -54,26 +56,32 @@ class UserTower(nn.Module):
             NUM_USERS, HYPERPARAMS["USER_ID_EMB_DIM"]
         )
 
-        # Separate embedding network per categorical user feature
-        self.cat_embs = nn.ModuleList([
-            # Each nn.Embedding must take in the number of categories as input size,
-            # then learns an output embedding of size e_size predetermined as 
-            # appropriately wide for this categorical feature
-            nn.Embedding(
-                i_size,
-                e_size
-            ) for i_size, e_size in zip(
-                cat_input_sizes,
-                cat_emb_sizes
-            )
-        ])
+        self.use_side_features = use_side_features
 
-        # Determine how wide the tower needs to be for the combined user input
-        input_dim = (
-            HYPERPARAMS["USER_ID_EMB_DIM"] # Width of embedded user ID vector
-            + sum(cat_emb_sizes) # Width of embedded categorical features
-            + num_numeric_features # Width of numeric features (directly fed to tower)
-        )
+        if self.use_side_features:
+            # Separate embedding network per categorical user feature
+            self.cat_embs = nn.ModuleList([
+                # Each nn.Embedding must take in the number of categories as input size,
+                # then learns an output embedding of size e_size predetermined as 
+                # appropriately wide for this categorical feature
+                nn.Embedding(
+                    i_size,
+                    e_size
+                ) for i_size, e_size in zip(
+                    cat_input_sizes,
+                    cat_emb_sizes
+                )
+            ])
+
+            # Determine how wide the tower needs to be for the combined user input
+            input_dim = (
+                HYPERPARAMS["USER_ID_EMB_DIM"] # Width of embedded user ID vector
+                + sum(cat_emb_sizes) # Width of embedded categorical features
+                + num_numeric_features # Width of numeric features (directly fed to tower)
+            )
+        else:
+            # Tower just needs to accept embedded user ID
+            input_dim = HYPERPARAMS["USER_ID_EMB_DIM"]
 
         # The user tower itself
         self.tower = nn.Sequential(
@@ -86,22 +94,25 @@ class UserTower(nn.Module):
     def forward(
         self, 
         user_ids, 
-        user_cat_feats, 
-        user_numeric_feats
+        user_cat_feats=None, 
+        user_numeric_feats=None
     ):
         # Embed the user ID into a dense vector
         id_emb = self.user_id_emb(user_ids)
 
-        # Embed the user's categorical features into dense vectors
-        cat_embs = torch.cat([
-            emb(user_cat_feats[:, i])
-            for i, emb in enumerate(self.cat_embs)
-        ], dim=1)
+        if self.use_side_features:
+            # Embed the user's categorical features into dense vectors
+            cat_embs = torch.cat([
+                emb(user_cat_feats[:, i])
+                for i, emb in enumerate(self.cat_embs)
+            ], dim=1)
 
-        # Combine user ID & categorical features as total feature input for the User Tower
-        tower_input = torch.cat(
-            (id_emb, cat_embs, user_numeric_feats), dim=1
-        )
+            # Combine user ID & categorical features as total feature input for the User Tower
+            tower_input = torch.cat(
+                (id_emb, cat_embs, user_numeric_feats), dim=1
+            )
+        else:
+            tower_input = id_emb
 
         # Pass user features into the User Tower & L2-normalise to coerce the model into learning meaningful relationships
         # (otherwise it can just cheat in training by increasing/decreasing vector magnitudes)
@@ -114,23 +125,30 @@ class UserTower(nn.Module):
 class ItemTower(nn.Module):
     def __init__(
         self,
-        num_item_categories
+        num_item_categories,
+
+        use_side_features: bool = True
     ):
         super().__init__()
+
+        self.use_side_features = use_side_features
 
         # Item ID embedding
         self.item_id_emb = nn.Embedding(
             NUM_ITEMS, HYPERPARAMS["ITEM_ID_EMB_DIM"]
         )
 
-        # Embedding the sparse multi-hot categories to a dense representation
-        # This is already a (num_item_categories)-long vector so use nn.Linear directly
-        self.cat_emb = nn.Linear(
-            num_item_categories, HYPERPARAMS["ITEM_CAT_EMB_DIM"]
-        )
+        if self.use_side_features:
+            # Embedding the sparse multi-hot categories to a dense representation
+            # This is already a (num_item_categories)-long vector so use nn.Linear directly
+            self.cat_emb = nn.Linear(
+                num_item_categories, HYPERPARAMS["ITEM_CAT_EMB_DIM"]
+            )
 
-        # Determine how wide the tower's input size needs to be
-        input_dim = HYPERPARAMS["ITEM_ID_EMB_DIM"] + HYPERPARAMS["ITEM_CAT_EMB_DIM"]
+            # Determine how wide the tower's input size needs to be
+            input_dim = HYPERPARAMS["ITEM_ID_EMB_DIM"] + HYPERPARAMS["ITEM_CAT_EMB_DIM"]
+        else:
+            input_dim = HYPERPARAMS["ITEM_ID_EMB_DIM"]
 
         # The item tower itself
         self.tower = nn.Sequential(
@@ -142,19 +160,22 @@ class ItemTower(nn.Module):
     
     def forward(
         self, 
-        item_ids,
-        item_categories
+        item_ids=None,
+        item_categories=None
     ):
         # Embed the item ID into a dense vector
         id_emb = self.item_id_emb(item_ids)
 
-        # Embed the item's multi-hot categories into a single dense vector
-        cat_emb = self.cat_emb(item_categories)
+        if self.use_side_features:
+            # Embed the item's multi-hot categories into a single dense vector
+            cat_emb = self.cat_emb(item_categories)
 
-        # Combine item ID and categories into a combined item feature vector for the tower
-        tower_input = torch.cat(
-            (id_emb, cat_emb), dim=-1
-        )
+            # Combine item ID and categories into a combined item feature vector for the tower
+            tower_input = torch.cat(
+                (id_emb, cat_emb), dim=-1
+            )
+        else:
+            tower_input = id_emb
 
         # Pass the item features through the tower to generate the final item embedding
         # & L2-normalise as done for the user embeddings too
@@ -170,32 +191,43 @@ class TwoTower(nn.Module):
         user_cat_input_sizes,
         user_cat_emb_sizes,
         user_num_numeric_features,
-        num_item_categories
+        num_item_categories,
+
+        use_side_features: bool = True
     ):
+        # Necessary for registering this module correctly
         super().__init__()
 
+        # Set up user tower
         self.user_tower = UserTower(
             user_cat_input_sizes,
             user_cat_emb_sizes,
-            user_num_numeric_features
+            user_num_numeric_features,
+
+            use_side_features
         )
 
+        # Set up item tower
         self.item_tower = ItemTower(
-            num_item_categories
+            num_item_categories,
+
+            use_side_features
         )
     
     def forward(
         self,
 
         user_ids,               # (B,)
-        user_cat_feats,         # (B, num_user_cat_feats)
-        user_numeric_feats,     # (B, num_numeric_feats)
-
         pos_item_ids,           # (B,)
-        pos_item_categories,    # (B, num_item_categories)
-
         neg_item_ids,           # (K,)
-        neg_item_categories,    # (K, num_item_categories)
+
+        # Optional user side features (if in use)
+        user_cat_feats=None,         # (B, num_user_cat_feats)
+        user_numeric_feats=None,     # (B, num_numeric_feats)
+
+        # Optional item side features (if in use)
+        pos_item_categories=None,    # (B, num_item_categories)
+        neg_item_categories=None    # (K, num_item_categories)
     ):
         # Generate user embedding
         user_emb = self.user_tower(
