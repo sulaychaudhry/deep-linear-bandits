@@ -55,16 +55,32 @@ def cli() -> None:
 @click.option(
     '--dropout',
     type=float,
+    type=click.FloatRange(min=0.0, max=1.0)
     default=0.2,
     show_default=True,
     help='Set training dropout probability to reduce tower overfitting; set to 0.0 to disable dropout.'
+)
+@click.option(
+    '--l2-norm/--no-l2-norm',
+    default=True,
+    show_default=True,
+    help='Enable or disable L2 normalisation on user/item tower outputs - useful to coerce the model to learn cosine similarity instead i.e. meaningful orientation instead of "cheating" via large magnitudes.'
+)
+@click.option(
+    '--logit-temp',
+    type=click.FloatRange(min=0.0, min_open=True),
+    default=0.07,
+    show_default=True,
+    help='Divisor used to scale similarity scores (logits) prior to softmax; smaller values make the model "sharper" i.e. it increases its confidence in small similarity differences.'
 )
 def train_tt(
     save_name: str,
     side_features: bool,
     hidden_sizes: tuple[int, ...],
     relu: bool,
-    dropout: float
+    dropout: float,
+    l2_norm: bool,
+    logit_temp: float
 ) -> None:
     """
     Interface for training the two-tower model.
@@ -111,7 +127,9 @@ def train_tt(
 
         # Extra tower settings
         "use_relu": relu,
-        "dropout": dropout
+        "dropout": dropout,
+        "use_l2_norm": l2_norm,
+        "logit_temp": logit_temp
     }
 
     print("Arguments passed to model constructor:")

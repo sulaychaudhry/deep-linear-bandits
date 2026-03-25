@@ -52,7 +52,8 @@ class UserTower(nn.Module):
         output_size: int = 64,
 
         use_relu: bool = True,
-        dropout: float = 0.2
+        dropout: float = 0.2,
+        use_l2_norm: bool = True
     ):
         super().__init__() # Needed for registering the nn.Modules correctly
 
@@ -62,6 +63,7 @@ class UserTower(nn.Module):
         )
 
         self.use_side_features = use_side_features
+        self.use_l2_norm = use_l2_norm
 
         if self.use_side_features:
             # Separate embedding network per categorical user feature
@@ -142,11 +144,13 @@ class UserTower(nn.Module):
         else:
             tower_input = id_emb
 
-        # Pass user features into the User Tower & L2-normalise to coerce the model into learning meaningful relationships
+        # Pass user features into the User Tower
+        user_embedding = self.tower(tower_input)
+
+        # Optionally L2-normalise to coerce the model into learning meaningful relationships via cosine similarity
         # (otherwise it can just cheat in training by increasing/decreasing vector magnitudes)
-        user_embedding = F.normalize(
-            self.tower(tower_input)
-        )
+        if self.use_l2_norm:
+            user_embedding = F.normalize(user_embedding)
 
         return user_embedding # The learned user embedding vector
 
@@ -159,11 +163,13 @@ class ItemTower(nn.Module):
         hidden_sizes: list[int] = [128],
         output_size: int = 64,
         use_relu: bool = True,
-        dropout: float = 0.2
+        dropout: float = 0.2,
+        use_l2_norm: bool = True
     ):
         super().__init__()
 
         self.use_side_features = use_side_features
+        self.use_l2_norm = use_l2_norm
 
         # Item ID embedding
         self.item_id_emb = nn.Embedding(
@@ -229,10 +235,11 @@ class ItemTower(nn.Module):
             tower_input = id_emb
 
         # Pass the item features through the tower to generate the final item embedding
-        # & L2-normalise as done for the user embeddings too
-        item_embedding = F.normalize(
-            self.tower(tower_input), dim=-1
-        )
+        item_embedding = self.tower(tower_input)
+
+        # Optionally L2-normalise as done for the user embeddings too
+        if self.use_l2_norm:
+            item_embedding = F.normalize(item_embedding, dim=-1)
 
         return item_embedding # The learned item embedding vector
 
@@ -255,10 +262,14 @@ class TwoTower(nn.Module):
 
         # Additional tower settings
         use_relu: bool = True,
-        dropout: float = 0.2
+        dropout: float = 0.2,
+        use_l2_norm: bool = True,
+        logit_temp: float = 0.07
     ):
         # Necessary for registering this module correctly
         super().__init__()
+
+        self.logit_temp = logit_temp
 
         # Set up user tower
         self.user_tower = UserTower(
@@ -272,7 +283,8 @@ class TwoTower(nn.Module):
             output_size=output_size,
 
             use_relu=use_relu,
-            dropout=dropout
+            dropout=dropout,
+            use_l2_norm=use_l2_norm
         )
 
         # Set up item tower
@@ -285,7 +297,8 @@ class TwoTower(nn.Module):
             output_size=output_size,
 
             use_relu=use_relu,
-            dropout=dropout
+            dropout=dropout,
+            use_l2_norm=use_l2_norm
         )
     
     def forward(
@@ -331,7 +344,8 @@ class TwoTower(nn.Module):
         # Similarity scores between users & items (logits, since they go into softmax for cross-entropy loss)
         logits = torch.cat([pos_scores, neg_scores], dim=1)  # (B, 1+K)
 
-        return logits / HYPERPARAMS["LOGIT_TEMPERATURE"]
+        # Use logit temperature to make the model "sharper" (more confident) in small similarity differences, otherwise it struggles to train in cases with very similar items that are misclassified as it doesn't penalise negatives enough + amplify positives enough in altering the vectors (since based on the softmax probabilities, which end up being all very similar for a long time)
+        return logits / self.logit_temp
 
 def visualise(
         metrics: dict, # Contains train_loss, val_loss & all recall@k, ndcg@k
