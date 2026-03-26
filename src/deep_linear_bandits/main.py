@@ -63,12 +63,25 @@ def cli() -> None:
     help='Enable or disable user/item side features in both towers.'
 )
 @click.option(
+    # Useful for emulating a viable MF baseline if side features disabled and --id-emb-dims set to e.g. 64
+    '--latent-embs-only',
+    is_flag=True,
+    help='For debugging & evaluation purposes, this disables the tower functionality and purely returns the concatenated latent embeddings right before they\'re fed into the user & item towers. Note that output embedding dimensions are not guaranteed to match --output-size as a result.'
+)
+@click.option(
     '--hidden-size',
     type=click.IntRange(1),
     multiple=True,
     default=(128,),
     show_default=True,
     help='Repeat for each hidden layer, e.g. --hidden-size 256 --hidden-size 128'
+)
+@click.option(
+    '--output-size',
+    type=click.IntRange(1),
+    default=64,
+    show_default=True,
+    help='The final output dimensions of a user/item embedding after the two-tower network.'
 )
 @click.option(
     '--relu/--no-relu',
@@ -182,6 +195,7 @@ def train_tt(
     best_k: int,
     side_features: bool,
     hidden_size: tuple[int, ...],
+    output_size: int,
     relu: bool,
     dropout: float,
     l2_norm: bool,
@@ -252,7 +266,7 @@ def train_tt(
 
         # The hidden layer sizes & output embedding widths
         "hidden_sizes": list(hidden_size),
-        "output_size": 64,
+        "output_size": output_size,
 
         # Extra tower settings
         "use_relu": relu,
