@@ -17,6 +17,8 @@ class UserTower(nn.Module):
         cat_emb_sizes,
         num_numeric_features,
         
+        skip_towers: bool = False,
+
         id_emb_dims: int = 32,
 
         use_side_features: bool = True,
@@ -28,6 +30,8 @@ class UserTower(nn.Module):
         use_l2_norm: bool = True
     ):
         super().__init__() # Needed for registering the nn.Modules correctly
+
+        self.skip_towers = skip_towers
 
         # User ID embedding
         self.user_id_emb = nn.Embedding(
@@ -117,7 +121,10 @@ class UserTower(nn.Module):
             tower_input = id_emb
 
         # Pass user features into the User Tower
-        user_embedding = self.tower(tower_input)
+        if not self.skip_towers:
+            user_embedding = self.tower(tower_input)
+        else:
+            user_embedding = tower_input
 
         # Optionally L2-normalise to coerce the model into learning meaningful relationships via cosine similarity
         # (otherwise it can just cheat in training by increasing/decreasing vector magnitudes)
@@ -130,6 +137,8 @@ class ItemTower(nn.Module):
     def __init__(
         self,
         num_item_categories,
+
+        skip_towers: bool = False,
 
         id_emb_dims: int = 32,
         item_cat_emb_dims: int = 16,
@@ -144,6 +153,7 @@ class ItemTower(nn.Module):
     ):
         super().__init__()
 
+        self.skip_towers = skip_towers
         self.use_side_features = use_side_features
         self.use_l2_norm = use_l2_norm
 
@@ -211,7 +221,10 @@ class ItemTower(nn.Module):
             tower_input = id_emb
 
         # Pass the item features through the tower to generate the final item embedding
-        item_embedding = self.tower(tower_input)
+        if not self.skip_towers:    
+            item_embedding = self.tower(tower_input)
+        else:
+            item_embedding = tower_input
 
         # Optionally L2-normalise as done for the user embeddings too
         if self.use_l2_norm:
@@ -228,6 +241,9 @@ class TwoTower(nn.Module):
         user_cat_emb_sizes,
         user_num_numeric_features,
         num_item_categories,
+
+        # Debug/eval option: disable towers entirely, just use nn.Embeddings all concatenated
+        skip_towers: bool = False,
 
         # Sizes of intermediate representations
         id_emb_dims: int = 32,
@@ -258,6 +274,8 @@ class TwoTower(nn.Module):
             cat_emb_sizes=user_cat_emb_sizes,
             num_numeric_features=user_num_numeric_features,
 
+            skip_towers=skip_towers,
+
             id_emb_dims=id_emb_dims,
 
             use_side_features=use_side_features,
@@ -273,6 +291,8 @@ class TwoTower(nn.Module):
         # Set up item tower
         self.item_tower = ItemTower(
             num_item_categories=num_item_categories,
+
+            skip_towers=skip_towers,
 
             id_emb_dims=id_emb_dims,
             item_cat_emb_dims=item_cat_emb_dims,

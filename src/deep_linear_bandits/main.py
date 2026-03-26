@@ -64,9 +64,9 @@ def cli() -> None:
 )
 @click.option(
     # Useful for emulating a viable MF baseline if side features disabled and --id-emb-dims set to e.g. 64
-    '--latent-embs-only',
+    '--skip-towers',
     is_flag=True,
-    help='For debugging & evaluation purposes, this disables the tower functionality and purely returns the concatenated latent embeddings right before they\'re fed into the user & item towers. Note that output embedding dimensions are not guaranteed to match --output-size as a result.'
+    help='For debugging & evaluation purposes, this disables the tower functionality (skips their MLPs) and purely treats the concatenated latent embeddings as suitable L2-normalisable output embeddings. Note that output embedding dimensions are not guaranteed to match --output-size as a result, nor are necessarily the same width suitable for dot prod unless --no-side-features is passed.'
 )
 @click.option(
     '--hidden-size',
@@ -194,6 +194,7 @@ def train_tt(
     metric_k: tuple[int, ...],
     best_k: int,
     side_features: bool,
+    skip_towers: bool,
     hidden_size: tuple[int, ...],
     output_size: int,
     relu: bool,
@@ -219,6 +220,8 @@ def train_tt(
     flags = locals()
     if best_k not in metric_k:
         raise click.BadParameter(f"Flag best-k={str(best_k)} must be one of the available metric-k={str(metric_k)}", param_hint='--best-k')
+    if skip_towers and side_features:
+        raise click.BadOptionUsage("Debug (experimental) flag --skip-towers is enabled but without --no-side-features; user and item embedding widths are mismatched and will not be suitable for computing dot-product similarities.")
 
     # Set up the directory for saving this model & its metrics
     path = f'tt-models/{save_name}/'
@@ -255,6 +258,9 @@ def train_tt(
 
         # Item side features
         "num_item_categories": item_categories.shape[1],
+
+        # Debug/eval option: disable towers entirely, just use nn.Embeddings all concatenated
+        "skip_towers": skip_towers,
 
         # Sizes of intermediate representations
         "id_emb_dims": id_emb_dims,
