@@ -8,14 +8,16 @@ from torch.utils.data import Dataset
 NUM_USERS = 7176
 NUM_ITEMS = 10728
 
-DATA_DIR = "/home/sulay/deep-linear-bandits/kuairec/data/"
+DATA_DIR = "kuairec/data/"
 
-def preprocess_krbig_interactions():
+def preprocess_krbig_interactions(
+        watch_threshold: float = 2.0
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Preprocess KuaiRec-Big user-item interactions into the training &
     validation set; only "strongly positive" interactions (of which there
     are about 800k) are kept: those with watch_ratio >= 2.0 as suggested in
-    the KuaiRec paper.
+    the KuaiRec paper (but can be modified for additional experiments).
 
     The training set has size 80%, leaving a validation set of size 20%.
     These splits are per-user to avoid bias against cold users due to
@@ -38,19 +40,19 @@ def preprocess_krbig_interactions():
         usecols=["user_id", "video_id", "watch_ratio"]
     )
 
-    # Filter for the "strongly positive" signal: watch_ratio >= 2.0
+    # Filter for the "strongly positive" signal: watch_ratio >= watch_threshold
     # Also removes duplicate user-item interactions
     bm = (
-        bm[bm["watch_ratio"] >= 2.0]
+        bm[bm["watch_ratio"] >= watch_threshold]
         .drop(columns=["watch_ratio"])
         .drop_duplicates()
     )
 
-    # Users with less than 5 interactions (after signal filtering)
+    # Users with less than 3 interactions (after signal filtering)
     # contribute purely to training; they only constitute a small
     # portion of the dataset.
     user_counts = bm["user_id"].value_counts()
-    low_users = user_counts[user_counts < 5].index
+    low_users = user_counts[user_counts < 3].index
     low_mask = bm["user_id"].isin(low_users)
 
     # Perform the 80-20 per-user train-val split, mixing in the
@@ -271,7 +273,10 @@ class KRBig(Dataset):
 
 # Small matrix dataset (used for simulating the bandit)
 class KRSmall:
-    def __init__(self):
+    def __init__(
+            self,
+            watch_threshold: float = 2.0
+        ):
         # Load in the data using Pandas
         krs_df = pd.read_csv(
             DATA_DIR + "small_matrix.csv",
@@ -281,7 +286,7 @@ class KRSmall:
         # Convert stored interactions to NumPy arrays
         self.intr_user_ids = krs_df["user_id"].to_numpy()
         self.intr_item_ids = krs_df["video_id"].to_numpy()
-        self.intr_signals = (krs_df["watch_ratio"] >= 2.0).to_numpy()
+        self.intr_signals = (krs_df["watch_ratio"] >= watch_threshold).to_numpy()
 
         # Store unique user & item IDs as they will be used often
         # Also store the inverse mappings (the interactions but using the new indices of the user & item matrices)

@@ -8,10 +8,7 @@ from tqdm import tqdm
 import numpy as np
 from collections import defaultdict
 import matplotlib.pyplot as plt
-import math
 from datetime import datetime
-
-K_VALUES = [10, 50, 100, 200] # K values used for computing Recall@K on the held-out validation set
 
 class UserTower(nn.Module):
     def __init__(
@@ -482,6 +479,9 @@ def train_two_tower(
     model: TwoTower,
     device: torch.device,
 
+    metric_ks: float,
+    best_k: float,
+
     train_loader: DataLoader,
     val_loader: DataLoader,
 
@@ -495,7 +495,6 @@ def train_two_tower(
     epochs: int,
     num_negatives: int,
     negative_sampling: str,             # 'uniform' or 'in-batch'
-    lr: float,
     optimiser: torch.optim.Optimizer    # Adam or AdamW
 ) -> tuple[dict, TwoTower]:
     """
@@ -505,13 +504,13 @@ def train_two_tower(
         - dict of per-epoch metric lists
             - ['train_loss']
             - ['val_loss']
-            - ['recall@{k}']
-            - ['ndcg@{k}']
-        - the best state of the passed model (by Recall@50)
+            - ['recall@{k}'] for all metric_ks
+            - ['ndcg@{k}'] for all metric_ks
+        - the best state of the passed model (by Recall@k for k=best_k)
     """
 
-    # Track best validation Recall@50 to decide when to save the model, + save the model by its weights as that's all you need to revert it
-    best_r50 = -1.0
+    # Track best validation Recall@(best_k) to decide when to save the model, + save the model by its weights as that's all you need to revert it
+    best_recall = -1.0
     best_weights = model.state_dict()
 
     # Use CrossEntropyLoss as the training objective
@@ -677,26 +676,26 @@ def train_two_tower(
 
             val_ground_truth,
 
-            k_values=K_VALUES
+            k_values=metric_ks
         )
 
-        for i, k in enumerate(K_VALUES):
+        for i, k in enumerate(metric_ks):
             metrics[f"recall@{k}"].append(recall[i])
 
-        for i, k in enumerate(K_VALUES):
+        for i, k in enumerate(metric_ks):
             metrics[f"ndcg@{k}"].append(ndcg[i])
 
-        # If Recall@50 has improved, save the model
-        r50 = metrics["recall@50"][-1]
-        if r50 > best_r50:
+        # If best Recall@(best_k) has improved, save the model
+        rk = metrics[f"recall@{best_k}"][-1]
+        if rk > best_recall:
             best_weights = model.state_dict()
-            best_r50 = r50
+            best_recall = rk
 
         # Collate results for later visualisation
         metrics["train_loss"].append(train_loss)
         metrics["val_loss"].append(val_loss)
 
-    print(f"Training complete - best Recall@50: {best_r50}")
+    print(f"Training complete - best Recall@{best_k}: {best_recall}")
 
     # Load the best model weights back in
     model.load_state_dict(

@@ -35,6 +35,28 @@ def cli() -> None:
     help='Directory name under tt-models/ used to save the model & its results.'
 )
 @click.option(
+    '--watch-threshold',
+    type=click.FloatRange(0.0, 5.0),
+    default=2.0,
+    show_default=True,
+    help='The minimum watch_ratio to observe to classify a given video as a "positive" interaction.'
+)
+@click.option(
+    '--metric-k',
+    type=click.IntRange(1),
+    multiple=True,
+    default=(10, 50, 100, 200),
+    show_default=True,
+    help='Repeat for each K value to use for computing validation Recall@K and NDCG@K, e.g. --metric-k 10 --metric-k 50 ...'
+)
+@click.option(
+    '--best-k',
+    type=click.IntRange(1),
+    default=50,
+    show_default=True,
+    help='The K value to compute Recall@K for in freezing the model at its best performance; must be a passed metric-k argument.'
+)
+@click.option(
     '--side-features/--no-side-features',
     default=True,
     show_default=True,
@@ -155,6 +177,9 @@ def cli() -> None:
 )
 def train_tt(
     save_name: str,
+    watch_threshold: float,
+    metric_k: tuple[int, ...],
+    best_k: int,
     side_features: bool,
     hidden_size: tuple[int, ...],
     relu: bool,
@@ -178,6 +203,8 @@ def train_tt(
     """
 
     flags = locals()
+    if best_k not in metric_k:
+        raise click.BadParameter(f"Flag best-k={str(best_k)} must be one of the available metric-k={str(metric_k)}", param_hint='--best-k')
 
     # Set up the directory for saving this model & its metrics
     path = f'tt-models/{save_name}/'
@@ -191,7 +218,7 @@ def train_tt(
             f.write(f"{flag_name}: {str(flag_arg)}\n")
 
     # Get training & validation (positive) user-item interactions from KuaiRec-Big
-    pos_intrs_train, pos_intrs_val = dlb_data.preprocess_krbig_interactions()
+    pos_intrs_train, pos_intrs_val = dlb_data.preprocess_krbig_interactions(watch_threshold)
 
     # Get user side features: The categorical and numeric user features, alongside the size of each categorical user feature
     (user_cat_feats, user_cat_sizes), user_numeric_feats = dlb_data.preprocess_user_features()
