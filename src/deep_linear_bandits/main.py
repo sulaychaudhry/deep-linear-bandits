@@ -6,6 +6,7 @@ import os
 import shutil
 import math
 import pickle
+import json
 
 import deep_linear_bandits.data as dlb_data
 import deep_linear_bandits.two_tower as dlb_tt
@@ -176,10 +177,18 @@ def train_tt(
     Interface for training the two-tower model.
     """
 
+    flags = locals()
+
     # Set up the directory for saving this model & its metrics
     path = f'tt-models/{save_name}/'
     if os.path.exists(path): shutil.rmtree(path)
     os.makedirs(path)
+
+    print(f"\ntrain_tt flags (logged to {path}flags.txt):")
+    with open(path + 'flags.txt', 'a') as f:
+        for flag_name, flag_arg in flags.items():
+            print(f"    {flag_name}: {str(flag_arg)}")
+            f.write(f"{flag_name}: {str(flag_arg)}\n")
 
     # Get training & validation (positive) user-item interactions from KuaiRec-Big
     pos_intrs_train, pos_intrs_val = dlb_data.preprocess_krbig_interactions()
@@ -225,9 +234,10 @@ def train_tt(
         "logit_temp": logit_temp
     }
 
-    print("Arguments passed to model constructor:")
+    print(f"\nArguments passed to model constructor (saved to {path}model_args.pkl):")
     for param, arg in model_args.items():
         print("    " + param + ": " + str(arg))
+    print()
 
     # Save the model args for reconstructing the model later
     with open(path + 'model_args.pkl', 'wb') as f:
@@ -259,7 +269,7 @@ def train_tt(
         batch_size=batch_size,
         shuffle=True, # Shuffle per epoch to reduce it from fitting on data order
         num_workers=data_workers,
-        pin_memory=True,
+        pin_memory=(True if torch.accelerator.is_available() else False),
         persistent_workers=True
     )
     val_loader = DataLoader(
@@ -267,7 +277,7 @@ def train_tt(
         batch_size=batch_size,
         shuffle=False, # Don't shuffle per-epoch for validation, not necessary & has been shuffled during data split
         num_workers=data_workers,
-        pin_memory=True,
+        pin_memory=(True if torch.accelerator.is_available() else False),
         persistent_workers=True
     )
 
@@ -297,11 +307,10 @@ def train_tt(
         )
     )
 
-    print(metrics)
-
     # Save metrics for later visualisation
-    with open(path + 'metrics.pkl', 'wb') as f:
-        pickle.dump(metrics, f)
+    with open(path + 'metrics.json', 'w') as f:
+        json.dump(metrics, f, indent=4)
+    print(f"\nModel metrics have been saved to {path}metrics.json")
 
 import deep_linear_bandits.two_tower as dlb_tt
 from deep_linear_bandits.data import KRSmall

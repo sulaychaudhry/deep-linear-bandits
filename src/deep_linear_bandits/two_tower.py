@@ -541,15 +541,13 @@ def train_two_tower(
     # Train model for multiple epochs, tracking both training & validation loss
     # Additionally track Recall@K & NDCG@K as proper validation metrics
     metrics = defaultdict(list)
-    for epoch in range(1, epochs + 1):
+    for epoch in tqdm(range(1, epochs + 1), desc="Train/val epoch"):
         # Switch model into training mode
         model.train()
 
         # Train model on all training batches in this epoch; track training loss
         train_loss = 0
-        for batch in tqdm(
-            train_loader, desc=f"Epoch {epoch}/{epochs} (train)"
-        ):
+        for batch in train_loader:
             optimiser.zero_grad()
 
             if negative_sampling == 'in-batch':
@@ -613,9 +611,7 @@ def train_two_tower(
         # Check average per-batch validation loss after this epoch
         val_loss = 0
         with torch.no_grad(): # Not training so don't compute gradients for backprop
-            for batch in tqdm(
-                val_loader, desc=f"Epoch {epoch}/{epochs} (val)"
-            ):
+            for batch in val_loader:
                 if negative_sampling == 'in-batch':
                     # Again, the manual in-batch neg sampling logic
 
@@ -663,9 +659,6 @@ def train_two_tower(
                 val_loss += loss_fn(logits, target).item()
             val_loss /= len(val_loader) # Track per-batch average loss
 
-        print(f"Epoch {epoch} average batch loss (train): {train_loss}")
-        print(f"Epoch {epoch} average batch loss (val): {val_loss}")
-
         # Evaluate Recall@K & NDCG@K performance on the validation set
         recall, ndcg = compute_val_metrics(
             model,
@@ -688,17 +681,16 @@ def train_two_tower(
         )
 
         for i, k in enumerate(K_VALUES):
-            print(f"Epoch {epoch} Recall@{k} (val, avg. per-user): {recall[i]}")
             metrics[f"recall@{k}"].append(recall[i])
 
         for i, k in enumerate(K_VALUES):
-            print(f"Epoch {epoch} NDCG@{k} (val, avg. per-user): {ndcg[i]}")
             metrics[f"ndcg@{k}"].append(ndcg[i])
 
         # If Recall@50 has improved, save the model
         r50 = metrics["recall@50"][-1]
         if r50 > best_r50:
             best_weights = model.state_dict()
+            best_r50 = r50
 
         # Collate results for later visualisation
         metrics["train_loss"].append(train_loss)
@@ -711,7 +703,7 @@ def train_two_tower(
         best_weights
     )
 
-    return metrics, model
+    return dict(metrics), model
 
 # Old training method being refactored
 def generate_two_tower_model(
