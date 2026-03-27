@@ -11,7 +11,7 @@
 #SBATCH --output=/dcs/23/u5567816/deep-linear-bandits/slurm/joboutput_%j.out
 #SBATCH --error=/dcs/23/u5567816/deep-linear-bandits/slurm/joboutput_%j.err
 
-echo "Starting job at $(date)"
+echo -e "Starting job at $(date)\n"
 
 uv run dlb train-tt \
     --save-name test-1

@@ -1,3 +1,5 @@
 .venv
 kuairec
 src/deep_linear_bandits/__pycache__
+slurm/joboutput*
+tt-models/*

@@ -15,6 +15,7 @@ DLB_DIR = "/dcs/23/u5567816/deep-linear-bandits/"
 DATA_DIR = DLB_DIR + "kuairec/data/"
 
 # Set up device for PyTorch to use the GPU (if available)
+torch.set_float32_matmul_precision('high')
 device = (
     torch.accelerator.current_accelerator()
     if torch.accelerator.is_available()
