@@ -333,6 +333,9 @@ def train_tt(
         model=model,
         device=device,
 
+        metric_ks=list(metric_k),
+        best_k=best_k,
+
         train_loader=train_loader,
         val_loader=val_loader,
 
@@ -354,13 +357,22 @@ def train_tt(
         )
     )
 
-    # Save metrics for later visualisation
+    # Save metrics
     with open(path + 'metrics.json', 'w') as f:
         json.dump(metrics, f, indent=4)
     print(f"\nModel metrics have been saved to {path}metrics.json")
 
-import deep_linear_bandits.two_tower as dlb_tt
-from deep_linear_bandits.data import KRSmall
+    # Visualise metrics & save to disk
+    dlb_tt.visualise(
+        metrics,
+        path + 'metrics.png',
+        list(metric_k),
+
+        training_set,
+        validation_set
+    )
+    print(f"Plotted metrics have been saved to {path}metrics.png")
+
 from deep_linear_bandits.simulator import Simulator
 
 USE_PRETRAINED = True

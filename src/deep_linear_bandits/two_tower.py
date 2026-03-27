@@ -353,56 +353,6 @@ class TwoTower(nn.Module):
         # Use logit temperature to make the model "sharper" (more confident) in small similarity differences, otherwise it struggles to train in cases with very similar items that are misclassified as it doesn't penalise negatives enough + amplify positives enough in altering the vectors (since based on the softmax probabilities, which end up being all very similar for a long time)
         return logits / self.logit_temp
 
-def visualise(
-        metrics: dict, # Contains train_loss, val_loss & all recall@k, ndcg@k
-        recall_baselines: list[float]
-) -> None:
-    epochs = range(1, HYPERPARAMS["EPOCHS"] + 1)
-    colours = plt.rcParams["axes.prop_cycle"].by_key()["color"] # PyPlot default colour cycle
-
-    fig, (ax_loss, ax_recall, ax_ndcg) = plt.subplots(1, 3, figsize=(24, 10)) # Set up superplot
-
-    # Plot training vs. validation loss
-    ax_loss.plot(epochs, metrics["train_loss"], label="Training Loss")
-    ax_loss.plot(epochs, metrics["val_loss"], label="Validation Loss")
-    ax_loss.set_xlabel("Epoch")
-    ax_loss.set_ylabel("Mean per-Batch Cross-Entropy Loss")
-    ax_loss.set_title("Training & Validation Loss per Epoch")
-    ax_loss.legend(fontsize=10, loc='upper right')
-    ax_loss.grid(True, alpha=0.3)
-
-    # Plot Recall@K over epochs with the random policy baselines
-    for i, k in enumerate(K_VALUES):
-        colour = colours[i % len(colours)]
-        ax_recall.plot(epochs, metrics[f"recall@{k}"], color=colour, label=f"Model Recall@{k}")
-        ax_recall.axhline(
-            recall_baselines[i],
-            color=colour,
-            linestyle=":",
-            alpha=0.7,
-            label=f"Random Policy Recall@{k} ({recall_baselines[i]:.4f})"
-        )
-    ax_recall.set_xlabel("Epoch")
-    ax_recall.set_ylabel("Mean User Recall@K")
-    ax_recall.set_title("Recall@K per Epoch (Validation Set)")
-    ax_recall.legend(fontsize=9, loc='lower right')
-    ax_recall.grid(True, alpha=0.3)
-
-    # Plot NDCG@K over epochs
-    for i, k in enumerate(K_VALUES):
-        colour = colours[i % len(colours)]
-        ax_ndcg.plot(epochs, metrics[f"ndcg@{k}"], color=colour, label=f"NDCG@{k}")
-    ax_ndcg.set_xlabel("Epoch")
-    ax_ndcg.set_ylabel("Mean User NDCG@K")
-    ax_ndcg.set_title("NDCG@K per Epoch (Validation Set)")
-    ax_ndcg.legend(fontsize=10, loc='lower right')
-    ax_ndcg.grid(True, alpha=0.3)
-
-    plt.tight_layout()
-    timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
-    plt.savefig(f'metrics/two-tower/metrics_{timestamp}.png')
-    plt.show()
-
 @torch.no_grad()
 def compute_val_metrics(
     model: TwoTower,
@@ -499,8 +449,8 @@ def train_two_tower(
     model: TwoTower,
     device: torch.device,
 
-    metric_ks: float,
-    best_k: float,
+    metric_ks: list[int],
+    best_k: int,
 
     train_loader: DataLoader,
     val_loader: DataLoader,
@@ -710,6 +660,7 @@ def train_two_tower(
         if rk > best_recall:
             best_weights = model.state_dict()
             best_recall = rk
+            metrics["best_epoch"] = epoch
 
         # Collate results for later visualisation
         metrics["train_loss"].append(train_loss)
@@ -724,11 +675,17 @@ def train_two_tower(
 
     return dict(metrics), model
 
-# Old training method being refactored
-def generate_two_tower_model(
-    device: torch.device             # Device to train the model on (GPU if available)
-) -> TwoTower:                       # The trained two-tower model
+def visualise(
+        metrics: dict,
+        save_path: str,
+        k_values: list[int],
 
+        training_set: dlb_data.KRBig,
+        validation_set: dlb_data.KRBig
+) -> None:
+    """
+    Generates plots of the trained two-tower model's metrics across all of its train/val epochs, and saves them to disk.
+    """
 
     # Compute expected Recall@K under a purely random recommendation policy, averaged over
     # all validation users - this is useful when visualising the Recall@K to show that the
@@ -746,12 +703,51 @@ def generate_two_tower_model(
     recall_baselines = [
         # Expected number of hits for K random items is exactly (K / total number of available items)
         (k / (NUM_ITEMS - train_counts)).mean() # Mean of the per-user baselines
-        for k in K_VALUES
+        for k in k_values
     ]
 
-    # Visualise two-tower training & validation metrics (via plots)
-    visualise(metrics, recall_baselines)
+    epochs = range(1, len(metrics["train_loss"]) + 1)
+    colours = plt.rcParams["axes.prop_cycle"].by_key()["color"] # PyPlot default colour cycle
 
-    # Return the best model seen in training
-    model.load_state_dict(torch.load(MODEL_PATH)["model_state"])
-    return model
+    fig, (ax_loss, ax_recall, ax_ndcg) = plt.subplots(1, 3, figsize=(24, 10)) # Set up superplot
+
+    # Plot training vs. validation loss
+    ax_loss.plot(epochs, metrics["train_loss"], label="Training Loss")
+    ax_loss.plot(epochs, metrics["val_loss"], label="Validation Loss")
+    ax_loss.set_xlabel("Epoch")
+    ax_loss.set_ylabel("Mean per-Batch Cross-Entropy Loss")
+    ax_loss.set_title("Training & Validation Loss per Epoch")
+    ax_loss.legend(fontsize=10, loc='upper right')
+    ax_loss.grid(True, alpha=0.3)
+
+    # Plot Recall@K over epochs with the random policy baselines
+    for i, k in enumerate(k_values):
+        colour = colours[i % len(colours)]
+        ax_recall.plot(epochs, metrics[f"recall@{k}"], color=colour, label=f"Model Recall@{k}")
+        ax_recall.axhline(
+            recall_baselines[i],
+            color=colour,
+            linestyle=":",
+            alpha=0.7,
+            label=f"Random Policy Recall@{k} ({recall_baselines[i]:.4f})"
+        )
+    ax_recall.set_xlabel("Epoch")
+    ax_recall.set_ylabel("Mean User Recall@K")
+    ax_recall.set_title("Recall@K per Epoch (Validation Set)")
+    ax_recall.legend(fontsize=9, loc='lower right')
+    ax_recall.grid(True, alpha=0.3)
+
+    # Plot NDCG@K over epochs
+    for i, k in enumerate(k_values):
+        colour = colours[i % len(colours)]
+        ax_ndcg.plot(epochs, metrics[f"ndcg@{k}"], color=colour, label=f"NDCG@{k}")
+    ax_ndcg.set_xlabel("Epoch")
+    ax_ndcg.set_ylabel("Mean User NDCG@K")
+    ax_ndcg.set_title("NDCG@K per Epoch (Validation Set)")
+    ax_ndcg.legend(fontsize=10, loc='lower right')
+    ax_ndcg.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
+    plt.savefig(save_path)
+    plt.close()
