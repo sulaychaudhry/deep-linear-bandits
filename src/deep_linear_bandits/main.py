@@ -349,7 +349,6 @@ def train_tt(
         epochs=epochs,
         num_negatives=num_negatives,
         negative_sampling=negative_sampling,
-        lr=lr,
         optimiser=(
             torch.optim.Adam(model.parameters(), lr=lr)
             if optimiser=='adam' else
