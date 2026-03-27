@@ -11,6 +11,9 @@ import json
 import deep_linear_bandits.data as dlb_data
 import deep_linear_bandits.two_tower as dlb_tt
 
+DLB_DIR = "/dcs/23/u5567816/deep-linear-bandits/"
+DATA_DIR = DLB_DIR + "kuairec/data/"
+
 # Set up device for PyTorch to use the GPU (if available)
 device = (
     torch.accelerator.current_accelerator()
@@ -24,8 +27,8 @@ def cli() -> None:
     The command-line interface for training the two-tower model and running the bandit simulations.
     """
 
-    if not os.path.exists('kuairec/data/'):
-        raise Exception("The KuaiRec dataset must be located at kuairec/data/")
+    if not os.path.exists(DATA_DIR):
+        raise Exception(f"The KuaiRec dataset must be located at {DATA_DIR}")
 
     print(f"PyTorch device: {device}")
 
@@ -227,7 +230,7 @@ def train_tt(
         raise click.BadOptionUsage("Debug (experimental) flag --skip-towers is enabled but without --no-side-features; user and item embedding widths are mismatched and will not be suitable for computing dot-product similarities.")
 
     # Set up the directory for saving this model & its metrics
-    path = f'tt-models/{save_name}/'
+    path = DLB_DIR + f'tt-models/{save_name}/'
     if os.path.exists(path): shutil.rmtree(path)
     os.makedirs(path)
 
@@ -238,10 +241,10 @@ def train_tt(
             f.write(f"{flag_name}: {str(flag_arg)}\n")
 
     # Get training & validation (positive) user-item interactions from KuaiRec-Big
-    pos_intrs_train, pos_intrs_val = dlb_data.preprocess_krbig_interactions(watch_threshold)
+    pos_intrs_train, pos_intrs_val = dlb_data.preprocess_krbig_interactions(DATA_DIR, watch_threshold)
 
     # Get user side features: The categorical and numeric user features, alongside the size of each categorical user feature
-    (user_cat_feats, user_cat_sizes), user_numeric_feats = dlb_data.preprocess_user_features()
+    (user_cat_feats, user_cat_sizes), user_numeric_feats = dlb_data.preprocess_user_features(DATA_DIR)
 
     # Convert categorical feature sizes to embedding dimensions for each feature
     power = 1 / int(user_cat_emb_root)
@@ -250,7 +253,7 @@ def train_tt(
     ]
     
     # Get item side features: the item categories
-    item_categories = dlb_data.preprocess_item_categories()
+    item_categories = dlb_data.preprocess_item_categories(DATA_DIR)
     
     # Set up arguments to pass to the TwoTower constructor; these are saved in a dictionary to ensure that the model can be reloaded after it's saved
     model_args = {

@@ -8,9 +8,8 @@ from torch.utils.data import Dataset
 NUM_USERS = 7176
 NUM_ITEMS = 10728
 
-DATA_DIR = "kuairec/data/"
-
 def preprocess_krbig_interactions(
+        data_dir: str,
         watch_threshold: float = 2.0
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
@@ -36,7 +35,7 @@ def preprocess_krbig_interactions(
 
     # Read in KuaiRec-Big
     bm = pd.read_csv(
-        DATA_DIR + "big_matrix.csv",
+        data_dir + "big_matrix.csv",
         usecols=["user_id", "video_id", "watch_ratio"]
     )
 
@@ -70,7 +69,9 @@ def preprocess_krbig_interactions(
 
     return bm_train, bm_val # dataframes
 
-def preprocess_item_categories():
+def preprocess_item_categories(
+    data_dir: str
+) -> torch.Tensor:
     """
     Preprocesses item categories into a multi-hot-encoded tensor, s.t.
     across the 31 categories (cat 0 to cat 30) each item has a binary
@@ -92,7 +93,7 @@ def preprocess_item_categories():
 
     # Read in the item categories; convert them to an actual Python
     # list using ast.literal_eval as they're encoded weirdly in the csv
-    ic = pd.read_csv(DATA_DIR + "item_categories.csv")
+    ic = pd.read_csv(data_dir + "item_categories.csv")
     ic = ic["feat"].apply(literal_eval)
 
     # Set multi-hot position for each category, for each item (video)
@@ -140,7 +141,9 @@ USER_FEATURE_COLS = {
     ]
 }
 
-def preprocess_user_features():
+def preprocess_user_features(
+    data_dir: str
+) -> tuple[tuple[np.ndarray, list[int]], np.ndarray]:
     """
     Preprocesses user features, of which there are both categorical features and numeric
     features; they are handled as described in USER_FEATURE_COLS.
@@ -166,7 +169,7 @@ def preprocess_user_features():
     """
 
     # Read in the user features
-    uf = pd.read_csv(DATA_DIR + "user_features.csv")
+    uf = pd.read_csv(data_dir + "user_features.csv")
 
     # Each feature is handled separately, but later need to become columns
     # s.t. each user is a row in the matrix containing their features.
@@ -275,11 +278,12 @@ class KRBig(Dataset):
 class KRSmall:
     def __init__(
             self,
+            data_dir: str,
             watch_threshold: float = 2.0
         ):
         # Load in the data using Pandas
         krs_df = pd.read_csv(
-            DATA_DIR + "small_matrix.csv",
+            data_dir + "small_matrix.csv",
             usecols=["user_id", "video_id", "watch_ratio"]
         )
 
