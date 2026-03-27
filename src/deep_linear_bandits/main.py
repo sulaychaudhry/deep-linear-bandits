@@ -24,6 +24,9 @@ def cli() -> None:
     The command-line interface for training the two-tower model and running the bandit simulations.
     """
 
+    if not os.path.exists('kuairec/data/'):
+        raise Exception("The KuaiRec dataset must be located at kuairec/data/")
+
     print(f"PyTorch device: {device}")
 
 @cli.command('train-tt')
