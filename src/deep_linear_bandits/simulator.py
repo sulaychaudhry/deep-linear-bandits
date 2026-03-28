@@ -8,6 +8,35 @@ from datetime import datetime
 SMALL_USERS = 1411
 SMALL_ITEMS = 3327
 
+def build_two_tower_contexts(
+        user_embeddings: torch.Tensor,  # (U, D)
+        item_embeddings: torch.Tensor,  # (I, D)
+        include_product: bool = True
+) -> torch.Tensor:
+    """
+    Build context vectors from two-tower embeddings.
+
+    Constructs (U, I, D_ctx) context tensors by concatenating:
+        1. user embedding repeated across items    (U, I, D)
+        2. item embedding repeated across users    (U, I, D)
+
+        (if include_product=True)
+        3. element-wise product i.e. Hadamard      (U, I, D)
+
+    A given user-item context vector ends with size D_ctx = 2*D if no Hadamard, else D_ctx = 3*D.
+    """
+
+    # Precompute all context vectors across all users and all items; this is large (over 3GB) but will fit in VRAM
+    u = user_embeddings.unsqueeze(1)  # (U, 1, D)
+    i = item_embeddings.unsqueeze(0)  # (1, I, D)
+    parts = [
+        u.expand(-1, item_embeddings.shape[0], -1),  # (U, I, D)
+        i.expand(user_embeddings.shape[0], -1, -1),  # (U, I, D)
+    ]
+    if include_product:
+        parts.append(u * i)  # (U, I, D) via broadcasting
+    return torch.cat(parts, dim=-1)  # (U, I, D_ctx)
+
 class GreedyPolicy:
     def __init__(
             self,
