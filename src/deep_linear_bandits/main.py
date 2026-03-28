@@ -9,6 +9,7 @@ import pickle
 import json
 import numpy as np
 
+import glob as globmod
 import deep_linear_bandits.data as dlb_data
 import deep_linear_bandits.two_tower as dlb_tt
 import deep_linear_bandits.simulator as dlb_sim
@@ -267,7 +268,7 @@ def train_tt(
     
     # Get item side features: the item categories
     item_categories = dlb_data.preprocess_item_categories(DATA_DIR)
-    
+
     # Set up arguments to pass to the TwoTower constructor; these are saved in a dictionary to ensure that the model can be reloaded after it's saved
     model_args = {
         # User side features
@@ -313,7 +314,7 @@ def train_tt(
     torch.manual_seed(seed)
     np.random.seed(seed)
     torch.cuda.manual_seed(seed)
-    
+
     # Create two-tower model & move to GPU
     # + compile model for faster forward & backward passes
     model = dlb_tt.TwoTower(**model_args).to(device)
@@ -402,56 +403,304 @@ def train_tt(
     )
     print(f"Plotted metrics have been saved to {path}metrics.png")
 
-from deep_linear_bandits.simulator import Simulator
+@cli.command('simulate')
+@click.option(
+    '--save-name',
+    type=str,
+    default=datetime.now().strftime("%d-%m-%Y_%H-%M-%S.%f"),
+    show_default=True,
+    help='Directory name under simulations/ used to save results & plots.'
+)
+@click.option(
+    '--model',
+    'model_name',
+    type=str,
+    required=True,
+    help='Directory name under tt-models/ of the trained two-tower model to load.'
+)
+@click.option(
+    '--hadamard/--no-hadamard',
+    default=True,
+    show_default=True,
+    help='Include/exclude the element-wise (Hadamard) product of user & item embeddings in context vectors.'
+)
+@click.option(
+    '--watch-threshold',
+    type=click.FloatRange(0.0, 5.0),
+    default=None,
+    help='Minimum watch_ratio to classify an interaction as positive. If omitted, read from the model\'s flags.json.'
+)
+@click.option(
+    '--epsilon',
+    type=float,
+    multiple=True,
+    default=(0.01, 0.05, 0.1, 0.2),
+    show_default=True,
+    help='Repeat for each epsilon value for ε-greedy policies, e.g. --epsilon 0.05 --epsilon 0.1'
+)
+@click.option(
+    '--alpha',
+    type=float,
+    multiple=True,
+    default=(0.1, 0.5, 1.0, 2.0, 5.0),
+    show_default=True,
+    help='Repeat for each alpha value for LinUCB policies, e.g. --alpha 0.5 --alpha 1.0'
+)
+@click.option(
+    '--ts-v',
+    type=float,
+    multiple=True,
+    default=(0.25, 0.5, 1.0, 2.0, 5.0),
+    show_default=True,
+    help='Repeat for each variance scale value for Thompson Sampling policies, e.g. --ts-v 0.5 --ts-v 1.0'
+)
+@click.option(
+    '--lambda', 'lmbda',
+    type=click.FloatRange(min=0.0, min_open=True),
+    default=1.0,
+    show_default=True,
+    help='Ridge regularisation lambda for all linear bandit policies (LinUCB, ε-greedy, Thompson Sampling).'
+)
+@click.option(
+    '--rounds',
+    type=click.IntRange(1),
+    default=10000,
+    show_default=True,
+    help='Number of simulation rounds.'
+)
+@click.option(
+    '--seed-count',
+    type=click.IntRange(1),
+    default=1,
+    show_default=True,
+    help='Total number of independent seeds to run (averaged for final plots/metrics).'
+)
+@click.option(
+    '--seed',
+    type=int,
+    default=int(np.random.default_rng().integers(0, 2**63)),
+    help='RNG seed for full reproducibility. If omitted, a random seed is generated and logged.'
+)
+@click.option(
+    '--seed-index',
+    type=click.IntRange(0),
+    default=None,
+    help='Run only this one seed (0-indexed out of --seed-count). Intended for parallelising seeds across separate Slurm jobs; use "dlb collate" afterwards to merge results.'
+)
+def simulate(
+    save_name: str,
+    model_name: str,
+    hadamard: bool,
+    watch_threshold: float | None,
+    epsilon: tuple[float, ...],
+    alpha: tuple[float, ...],
+    ts_v: tuple[float, ...],
+    lmbda: float,
+    rounds: int,
+    seed_count: int,
+    seed: int,
+    seed_index: int | None,
+) -> None:
+    """
+    Run bandit simulations using the KuaiRec-Small matrix.
 
-USE_PRETRAINED = True
+    Policies simulated: Greedy (dot-product baseline), Random, ε-greedy, LinUCB, and Thompson Sampling.
+    """
 
-def main():
-    # Set up a device for PyTorch to use the GPU (if available)
-    device = (
-        torch.accelerator.current_accelerator()
-        if torch.accelerator.is_available()
-        else torch.device('cpu')
-    )
+    flags = locals()
 
-    model: dlb_tt.TwoTower
-    if USE_PRETRAINED:
-        print("Loading pre-trained two-tower model...")
+    # Validate --seed-index is within range if provided
+    if seed_index is not None and seed_index >= seed_count:
+        raise click.BadParameter(
+            f'--seed-index={seed_index} is out of range for --seed-count={seed_count} (must be 0 to {seed_count - 1}).',
+            param_hint='--seed-index'
+        )
 
-        # Use pretrained model config & state in models/two_tower.pt
-        checkpoint = torch.load(dlb_tt.MODEL_PATH, map_location=device)
-        model = dlb_tt.TwoTower(**checkpoint["model_config"]).to(device)
-        model.load_state_dict(checkpoint["model_state"])
-        model.compile()
-        model.eval()
-
-        print("Two-tower model loaded!")
+    # Set up output directory
+    path = DLB_DIR + f'simulations/{save_name}/'
+    if seed_index is not None:
+        # Slurm per-seed run: don't wipe existing directory (other seeds may already be there)
+        os.makedirs(path, exist_ok=True)
+        if not os.path.exists(path + 'flags.json'):
+            with open(path + 'flags.json', 'w') as f:
+                json.dump(flags, f, indent=4)
     else:
-        # Create & train a two-tower model over many epochs
-        # This method tracks the training & validation loss each epoch
-        model = dlb_tt.generate_two_tower_model(device)
-        model.eval()
-    
-    # Use inference mode for quickest use of the model after training
-    # Compute all user & item embeddings for the small matrix using the two-tower model
+        if os.path.exists(path): shutil.rmtree(path)
+        os.makedirs(path)
+        with open(path + 'flags.json', 'w') as f:
+            json.dump(flags, f, indent=4)
+
+    # Show user flags
+    print(f"\nsimulate flags (logged to {path}flags.json):")
+    for flag_name, flag_arg in flags.items():
+        print(f"    {flag_name}: {str(flag_arg)}")
+
+    # Load two-tower model
+    model_path = DLB_DIR + f'tt-models/{model_name}/'
+    model_pt = model_path + 'model.pt'
+    if not os.path.exists(model_pt):
+        raise click.ClickException(f"No model weights found at {model_pt}.")
+
+    with open(model_path + 'model_args.pkl', 'rb') as f:
+        model_args = pickle.load(f)
+    model = dlb_tt.TwoTower(**model_args).to(device)
+    model.load_state_dict(
+        torch.load(
+            model_pt, 
+            map_location=device, 
+            weights_only=True
+        )
+    )
+    model.compile()
+    model.eval()
+    print(f"\nLoaded two-tower model from {model_path}")
+
+    # Read watch_threshold from model's flags.json if not explicitly overridden
+    if watch_threshold is None:
+        with open(model_path + 'flags.json', 'r') as f:
+            model_flags = json.load(f)
+        watch_threshold = model_flags['watch_threshold']
+        print(f"Using watch_threshold={watch_threshold} from model's flags.json")
+
+    print(f"\nLoading KuaiRec-Small (watch_threshold={watch_threshold})...")
+    small_matrix = dlb_data.KRSmall(DATA_DIR, watch_threshold)
+
+    # Build context vectors in inference mode (much faster, gradient calculations not needed)
+    print(f"Building context vectors (hadamard={hadamard})...")
     with torch.inference_mode():
-        # Retrieve data for the small matrix
-        small_matrix = KRSmall()
+        user_embeddings = model.user_tower(*small_matrix.tower_ready_users(device))
+        item_embeddings = model.item_tower(*small_matrix.tower_ready_items(device))
+        contexts = dlb_sim.build_two_tower_contexts(user_embeddings, item_embeddings, include_product=hadamard)
 
-        # Compute all user & item embeddings for the small matrix
-        user_embeddings = model.user_tower(
-            *small_matrix.tower_ready_users(device)
-        )
-        item_embeddings = model.item_tower(
-            *small_matrix.tower_ready_items(device)
+    print(f"Context shape: {tuple(contexts.shape)} (D={contexts.shape[-1]})")
+
+    # Create simulator & run
+    print("\nRunning the simulator...")
+    simulator = dlb_sim.Simulator(device, small_matrix, contexts, user_embeddings, item_embeddings)
+    results = simulator.run(
+        seed_count=seed_count,
+        rounds=rounds,
+        e_greedy_epsilons=list(epsilon),
+        linucb_alphas=list(alpha),
+        ts_vs=list(ts_v),
+        lam=lmbda,
+        seed=seed,
+        seed_index=seed_index
+    )
+    print("Simulator complete!")
+
+    labels = results['labels']
+
+    # If a specific seed was run only (i.e. spread across multiple jobs, this is just one of them; dispatched via Slurm)
+    if seed_index is not None:
+        # Save only this seed's data, ready for collating
+        npz_path = path + f'seed_{seed_index}.npz'
+        np.savez(npz_path, rewards=results['rewards'], regrets=results['regrets'])
+        print(f"\nSeed {seed_index} results saved to {npz_path}")
+        print(f"Run 'dlb collate --save-name {save_name}' after all seeds complete to generate plots & metrics.")
+
+    # Not split into multiple Slurm jobs; either one seed only or multiple seeds within this single program instance
+    else:
+        rewards = results['mean_rewards']
+        regrets = results['mean_regrets']
+
+        simulator._visualise_rewards(seed_count, labels, rewards, path)
+        simulator._visualise_regrets(seed_count, labels, regrets, path)
+        print(f"Reward (rewards.png) & regret (regrets.png) plots saved to {path}")
+
+        # For human-readable view
+        metrics_out = {
+            'labels': labels,
+            'seed': seed,
+            'seed_count': seed_count,
+            'mean_cumulative_rewards': np.cumsum(rewards, axis=1).tolist(),
+            'mean_cumulative_regrets': np.cumsum(regrets, axis=1).tolist(),
+        }
+        with open(path + 'metrics.json', 'w') as f:
+            json.dump(metrics_out, f, indent=4)
+
+        # For efficient access if needed again
+        np.savez(path + 'raw_results.npz', rewards=rewards, regrets=regrets)
+        print(f"Simulation complete. Results saved to {path}")
+
+@cli.command('collate')
+@click.option(
+    '--save-name',
+    type=str,
+    required=True,
+    help='Directory name under simulations/ containing per-seed .npz files to collate.'
+)
+def collate(
+    save_name: str
+) -> None:
+    """
+    Collate per-seed simulation results within a single directory into merged plots & metrics.
+
+    Intended for use after running separate Slurm jobs with 'dlb simulate --seed-index N'; looks for all seed_{i}.npz files in the specified simulations/{save_name}/ directory.
+    """
+
+    # Check folder exists
+    path = DLB_DIR + f'simulations/{save_name}/'
+    if not os.path.isdir(path):
+        raise click.ClickException(f"Directory not found: {path}")
+
+    # Find all per-seed .npz files using glob to pattern match
+    seed_files = sorted(globmod.glob(path + 'seed_*.npz'))
+    if len(seed_files) < 2:
+        raise click.UsageError(
+            f"Found {len(seed_files)} seed_*.npz file(s) in {path}; need at least 2 to collate."
         )
 
-    # Pass small matrix data to the simulator for bandit simulation
-    simulator = Simulator(
-        device,
-        small_matrix,
-        user_embeddings,
-        item_embeddings
+    print(f"\nCollating {len(seed_files)} seed files from {path}...")
+
+    # Load flags to reconstruct policy labels
+    flags_path = path + 'flags.json'
+    if not os.path.exists(flags_path):
+        raise click.ClickException(f"No flags.json found in {path}; cannot reconstruct policy labels.")
+    with open(flags_path, 'r') as f:
+        flags = json.load(f)
+
+    labels = (
+        ["Greedy", "Random"]
+        + [f"ε-greedy (ε={e})" for e in flags['epsilon']]
+        + [f"LinUCB (α={a})" for a in flags['alpha']]
+        + [f"TS (ʋ={v})" for v in flags['ts_v']]
     )
 
-    simulator.run()
+    # Collect simulation arrays
+    all_rewards = []
+    all_regrets = []
+    for seed_file in seed_files:
+        npz = np.load(seed_file)
+
+        # Each has dims (n_policies, rounds)
+        all_rewards.append(npz['rewards'])
+        all_regrets.append(npz['regrets'])
+
+    # Stack to produce arrays with dims (total_seeds, n_policies, rounds) ready for computing means
+    all_rewards = np.stack(all_rewards, axis=0)
+    all_regrets = np.stack(all_regrets, axis=0)
+
+    # Compute mean & visualise
+    mean_rewards = all_rewards.mean(axis=0)
+    mean_regrets = all_regrets.mean(axis=0)
+    total_seeds = all_rewards.shape[0]
+    dlb_sim.Simulator._visualise_rewards(total_seeds, labels, mean_rewards, path)
+    dlb_sim.Simulator._visualise_regrets(total_seeds, labels, mean_regrets, path)
+
+    # Save metrics
+    metrics_out = {
+        'labels': labels,
+        'seed': flags['seed'],
+        'seed_count': total_seeds,
+        'mean_cumulative_rewards': np.cumsum(mean_rewards, axis=1).tolist(),
+        'mean_cumulative_regrets': np.cumsum(mean_regrets, axis=1).tolist(),
+    }
+    with open(path + 'metrics.json', 'w') as f:
+        json.dump(metrics_out, f, indent=4)
+
+    # Save combined raw arrays
+    np.savez(path + 'raw_results.npz', all_rewards=all_rewards, all_regrets=all_regrets)
+
+    print(f"\nCollation complete: {total_seeds} seeds merged.")
+    print(f"Results saved to {path}")
