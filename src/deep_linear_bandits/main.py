@@ -604,11 +604,12 @@ def simulate(
         rewards = results['mean_rewards']
         regrets = results['mean_regrets']
 
+        # Plot reward + regret as all seeds have data available
         simulator._visualise_rewards(seed_count, labels, rewards, path)
         simulator._visualise_regrets(seed_count, labels, regrets, path)
         print(f"Reward (rewards.png) & regret (regrets.png) plots saved to {path}")
 
-        # For human-readable view
+        # For human-readable view of metrics
         metrics_out = {
             'labels': labels,
             'seed': seed,
@@ -619,8 +620,8 @@ def simulate(
         with open(path + 'metrics.json', 'w') as f:
             json.dump(metrics_out, f, indent=4)
 
-        # For efficient access if needed again
-        np.savez(path + 'raw_results.npz', rewards=rewards, regrets=regrets)
+        # For efficient access of metrics if needed again
+        np.savez(path + 'raw_results.npz', all_rewards=results["all_rewards"], all_regrets=results["all_regrets"])
         print(f"Simulation complete. Results saved to {path}")
 
 @cli.command('collate')

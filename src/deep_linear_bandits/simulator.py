@@ -71,7 +71,7 @@ class RandomPolicy:
         # Save available items & the RNG
         self.available = available.detach().clone()
         self.rng = rng
-    
+
     def recommend(self, user_id:int) -> int:
         available = self.available[user_id]
 
@@ -206,7 +206,7 @@ class EpsilonGreedy:
         self.available[user_id, item_id] = False
 
         return item_id
-    
+
     def update(self, user_id:int, item_id:int, reward:int):
         # Same as LinUCB: update A_inv and b
 
@@ -238,7 +238,7 @@ class ThompsonSampling:
         # Set up posteriors (same as LinUCB, EpsilonGreedy)
         self.A_inv = (1 / lam) * torch.eye(contexts.shape[-1], device=self.device) # (D, D)
         self.b = torch.zeros(contexts.shape[-1], device=self.device)               # (D,)
-    
+
     def recommend(self, user_id: int) -> int:
         # Compute (theta = A_inv @ b) where theta is the current best estimate of the linear weights
         theta = self.A_inv @ self.b # (D,)
@@ -279,7 +279,7 @@ class ThompsonSampling:
         self.available[user_id, item_id] = False
 
         return item_id
-    
+
     def update(
             self,
             user_id: int,
@@ -302,19 +302,12 @@ class Simulator:
             self,
             device: torch.device,
             small_matrix: KRSmall,
+            contexts: torch.Tensor,
             user_embeddings: torch.Tensor,
             item_embeddings: torch.Tensor
     ):
         self.device = device
-
-        # Precompute all context vectors across all users and all items; this is large (over 3GB) but will fit in VRAM
-        u = user_embeddings.unsqueeze(1)  # (1411, 1, 64)
-        i = item_embeddings.unsqueeze(0)  # (1, 3327, 64)
-        self.contexts = torch.cat([
-                u.expand(-1, SMALL_ITEMS, -1), # -> (1411, 3327, 64)
-                i.expand(SMALL_USERS, -1, -1), # -> (1411, 3327, 64)
-                u * i                          # -> (1411, 3327, 64) since auto broadcasts
-        ], dim=-1)                             # =  (1411, 3327, D) where D=192
+        self.contexts = contexts
 
         # Compute a matrix to indicate all interactions that are 'valid' i.e. don't need masking out
         # This is because despite 99.7% density, some interactions are missing
@@ -325,16 +318,17 @@ class Simulator:
         self.rewards = np.zeros((SMALL_USERS, SMALL_ITEMS), dtype=bool)
         self.rewards[small_matrix.intr_new_uids, small_matrix.intr_new_iids] = small_matrix.intr_signals
 
-        # Precompute similarity scores for GreedyPolicy
+        # Precompute dot-product similarity scores for GreedyPolicy
         # This can be used immediately to derive the item IDs for GreedyPolicy as it has fixed behaviour
         dot_products = user_embeddings @ item_embeddings.T
         self.greedy_items = torch.sort(dot_products, dim=1, descending=True).indices.cpu().numpy()
-    
+
+    @staticmethod
     def _visualise_rewards(
-            self,
             seed_count: int,
             labels: list[str],
-            mean_rewards: np.ndarray[float]
+            mean_rewards: np.ndarray[float],
+            output_dir: str
     ):
         # Get cumulative rewards (from the means)
         cum_reward_means = np.cumsum(mean_rewards, axis=1)
@@ -346,7 +340,7 @@ class Simulator:
         else:
             fig.suptitle(f"Policy simulation: cumulative bandit reward (shared random seed)")
 
-        # Set up all three subplots
+        # Set up all three subplots with Greedy & Random baselines
         for ax in (ax1, ax2, ax3):
             ax.plot(rounds, cum_reward_means[0], color='#444444', label="Greedy", linestyle='--')
             ax.plot(rounds, cum_reward_means[1], color='#aaaaaa', label="Random", linestyle='--')
@@ -358,7 +352,7 @@ class Simulator:
         j, colours = 0, ['#c6d9f7', '#7aaede', '#4878CF', '#1e3f7a']
         for i, label in enumerate(labels):
             if not label.startswith("ε-greedy"): continue
-            ax1.plot(rounds, cum_reward_means[i], color=colours[j], label=label)
+            ax1.plot(rounds, cum_reward_means[i], color=colours[j % len(colours)], label=label)
             ax1.set_title("ε-greedy rewards")
             ax1.legend()
             j += 1
@@ -367,7 +361,7 @@ class Simulator:
         j, colours = 0, ['#fddbb4', '#f5a962', '#E8612C', '#a83a10', '#5c1a04']
         for i, label in enumerate(labels):
             if not label.startswith("LinUCB"): continue
-            ax2.plot(rounds, cum_reward_means[i], color=colours[j], label=label)
+            ax2.plot(rounds, cum_reward_means[i], color=colours[j % len(colours)], label=label)
             ax2.set_title("LinUCB rewards")
             ax2.legend()
             j += 1
@@ -376,21 +370,21 @@ class Simulator:
         j, colours = 0, ['#a8d8a8', '#6AAB6A', '#3d7a3d', '#1e4f1e', '#0a2a0a']
         for i, label in enumerate(labels):
             if not label.startswith("TS"): continue
-            ax3.plot(rounds, cum_reward_means[i], color=colours[j], label=label)
+            ax3.plot(rounds, cum_reward_means[i], color=colours[j % len(colours)], label=label)
             ax3.set_title("Thompson Sampling rewards")
             ax3.legend()
             j += 1
 
         plt.tight_layout()
-        timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S.%f")
-        plt.savefig(f'metrics/bandit/metrics_{timestamp}.png')
-        plt.show()
-    
+        plt.savefig(output_dir + 'rewards.png')
+        plt.close()
+
+    @staticmethod
     def _visualise_regrets(
-            self,
             seed_count: int,
             labels: list[str],
-            mean_regrets: np.ndarray[float]
+            mean_regrets: np.ndarray,
+            output_dir: str
     ):
         # Get cumulative regrets (from the means)
         cum_regret_means = np.cumsum(mean_regrets, axis=1)
@@ -402,7 +396,7 @@ class Simulator:
         else:
             fig.suptitle(f"Policy simulation: cumulative bandit regret (shared random seed)")
 
-        # Set up all three subplots
+        # Set up all three subplots with Random & Greedy baselines
         for ax in (ax1, ax2, ax3):
             ax.plot(rounds, cum_regret_means[1], color='#aaaaaa', label="Random", linestyle='--')
             ax.plot(rounds, cum_regret_means[0], color='#444444', label="Greedy", linestyle='--')
@@ -410,67 +404,68 @@ class Simulator:
             ax.set_ylabel("Cumulative regret")
             ax.grid(True, alpha=0.3)
 
-        # Plot ε-greedy rewards
+        # Plot ε-greedy regrets
         j, colours = 0, ['#c6d9f7', '#7aaede', '#4878CF', '#1e3f7a']
         for i, label in enumerate(labels):
             if not label.startswith("ε-greedy"): continue
-            ax1.plot(rounds, cum_regret_means[i], color=colours[j], label=label)
+            ax1.plot(rounds, cum_regret_means[i], color=colours[j % len(colours)], label=label)
             ax1.set_title("ε-greedy regret")
             ax1.legend()
             j += 1
 
-        # Plot LinUCB rewards
+        # Plot LinUCB regrets
         j, colours = 0, ['#fddbb4', '#f5a962', '#E8612C', '#a83a10', '#5c1a04']
         for i, label in enumerate(labels):
             if not label.startswith("LinUCB"): continue
-            ax2.plot(rounds, cum_regret_means[i], color=colours[j], label=label)
+            ax2.plot(rounds, cum_regret_means[i], color=colours[j % len(colours)], label=label)
             ax2.set_title("LinUCB regret")
             ax2.legend()
             j += 1
 
-        # Plot Thompson Sampling rewards
+        # Plot Thompson Sampling regrets
         j, colours = 0, ['#a8d8a8', '#6AAB6A', '#3d7a3d', '#1e4f1e', '#0a2a0a']
         for i, label in enumerate(labels):
             if not label.startswith("TS"): continue
-            ax3.plot(rounds, cum_regret_means[i], color=colours[j], label=label)
+            ax3.plot(rounds, cum_regret_means[i], color=colours[j % len(colours)], label=label)
             ax3.set_title("Thompson Sampling regret")
             ax3.legend()
             j += 1
 
         plt.tight_layout()
-        timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S.%f")
-        plt.savefig(f'metrics/bandit/metrics_{timestamp}.png')
-        plt.show()
+        plt.savefig(output_dir + 'regrets.png')
+        plt.close()
 
     def _run_one_seed(
             self,
             simulation_num: int,
-            stream: np.ndarray[int],
+            stream: np.ndarray,
             e_greedy_epsilons: list[float],
             linucb_alphas: list[float],
             ts_vs: list[float],
-            rounds: int
-    ) -> tuple[np.ndarray[bool], np.ndarray[bool]]:
-        rng = np.random.default_rng()
+            lam: float,
+            rounds: int,
+            seed: int
+    ) -> tuple[np.ndarray, np.ndarray]:
+        rng = np.random.default_rng(seed)
 
         # Set up policies
         policies = {
             "Greedy": GreedyPolicy(self.greedy_items, self.available.cpu().numpy()),
-            "Random": RandomPolicy(self.available, rng),
+            "Random": RandomPolicy(self.available, rng)
         }
         for eps in e_greedy_epsilons:
             policies[f"ε-greedy (ε={eps})"] = EpsilonGreedy(
-                self.device, self.contexts, self.available, rng, epsilon=eps
+                self.device, self.contexts, self.available, rng, epsilon=eps, lam=lam
             )
         for alpha in linucb_alphas:
             policies[f"LinUCB (α={alpha})"] = LinUCB(
-                self.device, self.contexts, self.available, alpha=alpha
+                self.device, self.contexts, self.available, alpha=alpha, lam=lam
             )
         for v in ts_vs:
             policies[f"TS (ʋ={v})"] = ThompsonSampling(
-                self.device, self.contexts, self.available, v=v
+                self.device, self.contexts, self.available, v=v, lam=lam
             )
-        
+
         # Calculate the oracle: how many positives exist per user?
         pos_count = self.rewards.sum(axis=1)
         pos_count = np.tile(pos_count, (len(policies), 1)) # Separate oracle copy for each policy to update
@@ -500,44 +495,56 @@ class Simulator:
 
                 # Update policy (allow bandits to update their ridge regression)
                 policy.update(user_id, item_rec, reward)
-        
+
         return rewards, regrets
 
     def run(
             self,
             seed_count: int = 1,
-            rounds: int = 100000
-    ):
-        # Generate the random streams of users
-        rng = np.random.default_rng()
+            rounds: int = 10000,
+            e_greedy_epsilons: list[float] = [0.01, 0.05, 0.1, 0.2],
+            linucb_alphas: list[float] = [0.1, 0.5, 1.0, 2.0, 5.0],
+            ts_vs: list[float] = [0.25, 0.5, 1.0, 2.0, 5.0],
+            lam: float = 1.0,
+            seed: int | None = None,      # if None, OS entropy will be used instead
+            seed_index: int | None = None  # if set, run only this seed (for Slurm); otherwise run all seeds
+    ) -> dict:
+        # Derive deterministic per-seed RNG seeds & user streams from the master seed
+        # This ensures that splitting across Slurm jobs with --seed-index produces the same results as a single run
+        rng = np.random.default_rng(seed)
+        child_seeds = rng.integers(0, 2**32, size=seed_count).tolist()
         streams = rng.integers(low=0, high=SMALL_USERS, size=(seed_count, rounds))
 
-        # Bandit policies
-        e_greedy_epsilons = [0.01, 0.05, 0.1, 0.2]
-        linucb_alphas = [0.1, 0.5, 1.0, 2.0, 5.0]
-        ts_vs = [0.25, 0.5, 1.0, 2.0, 5.0]
-
-        # Greedy & random + all bandit policies
+        # Policy labels
         labels = (
             ["Greedy", "Random"]
             + [f"ε-greedy (ε={e})" for e in e_greedy_epsilons]
             + [f"LinUCB (α={a})" for a in linucb_alphas]
             + [f"TS (ʋ={v})" for v in ts_vs]
         )
-        n_policies = len(labels)
 
-        # Run simulation across seed_count many seeds, collect rewards & regrets
-        all_rewards = np.empty((seed_count, n_policies, rounds), dtype=float)
-        all_regrets = np.empty((seed_count, n_policies, rounds), dtype=float)
-        for seed_num, stream in enumerate(streams):
-            all_rewards[seed_num], all_regrets[seed_num] = self._run_one_seed(
-                seed_num, stream, e_greedy_epsilons, linucb_alphas, ts_vs, rounds
+        # Dispatched over multiple Slurm jobs - this is just one of them
+        if seed_index is not None:
+            idx = seed_index if seed_index is not None else 0
+            rewards, regrets = self._run_one_seed(
+                idx, streams[idx], e_greedy_epsilons, linucb_alphas, ts_vs, lam, rounds, child_seeds[idx]
             )
-        
-        # Now calculate means
-        mean_rewards = all_rewards.mean(axis=0)
-        mean_regrets = all_regrets.mean(axis=0)
+            return {"labels": labels, "rewards": rewards, "regrets": regrets}
 
-        # Plot results
-        self._visualise_rewards(seed_count, labels, mean_rewards)
-        self._visualise_regrets(seed_count, labels, mean_regrets)
+        # All seeds are within this process
+        else:
+            n_policies = len(labels)
+            all_rewards = np.empty((seed_count, n_policies, rounds), dtype=float)
+            all_regrets = np.empty((seed_count, n_policies, rounds), dtype=float)
+            for i in range(seed_count):
+                all_rewards[i], all_regrets[i] = self._run_one_seed(
+                    i, streams[i], e_greedy_epsilons, linucb_alphas, ts_vs, lam, rounds, child_seeds[i]
+                )
+
+            return {
+                "labels": labels,
+                "mean_rewards": all_rewards.mean(axis=0),
+                "mean_regrets": all_regrets.mean(axis=0),
+                "all_rewards": all_rewards,
+                "all_regrets": all_regrets,
+            }
