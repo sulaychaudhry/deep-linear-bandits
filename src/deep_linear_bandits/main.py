@@ -8,8 +8,8 @@ import math
 import pickle
 import json
 import numpy as np
-
 import glob as globmod
+
 import deep_linear_bandits.data as dlb_data
 import deep_linear_bandits.two_tower as dlb_tt
 import deep_linear_bandits.simulator as dlb_sim
@@ -636,7 +636,7 @@ def collate(
     """
     Collate per-seed simulation results within a single directory into merged plots & metrics.
 
-    Intended for use after running separate Slurm jobs with 'dlb simulate --seed-index N'; looks for all seed_{i}.npz files in the specified simulations/{save_name}/ directory.
+    Intended for use after running separate Slurm jobs with 'dlb simulate --seed-index N'; expects all seed_*.npz files to be present.
     """
 
     # Check folder exists
@@ -644,21 +644,21 @@ def collate(
     if not os.path.isdir(path):
         raise click.ClickException(f"Directory not found: {path}")
 
-    # Find all per-seed .npz files using glob to pattern match
-    seed_files = sorted(globmod.glob(path + 'seed_*.npz'))
-    if len(seed_files) < 2:
-        raise click.UsageError(
-            f"Found {len(seed_files)} seed_*.npz file(s) in {path}; need at least 2 to collate."
-        )
-
-    print(f"\nCollating {len(seed_files)} seed files from {path}...")
-
-    # Load flags to reconstruct policy labels
+    # Load flags first so we can validate expected per-seed outputs directly
     flags_path = path + 'flags.json'
     if not os.path.exists(flags_path):
         raise click.ClickException(f"No flags.json found in {path}; cannot reconstruct policy labels.")
     with open(flags_path, 'r') as f:
         flags = json.load(f)
+
+    # Validate seed files by count: require exactly one per expected seed
+    seed_count = int(flags['seed_count'])
+    seed_files = sorted(globmod.glob(path + 'seed_*.npz'))
+    if len(seed_files) != seed_count:
+        raise click.UsageError(
+            f"Cannot collate: expected {seed_count} seed_*.npz files in {path}, found {len(seed_files)}."
+        )
+    print(f"\nCollating {seed_count} seed files from {path}...")
 
     labels = (
         ["Greedy", "Random"]
@@ -671,11 +671,10 @@ def collate(
     all_rewards = []
     all_regrets = []
     for seed_file in seed_files:
-        npz = np.load(seed_file)
-
-        # Each has dims (n_policies, rounds)
-        all_rewards.append(npz['rewards'])
-        all_regrets.append(npz['regrets'])
+        with np.load(seed_file) as npz:
+            # Each has dims (n_policies, rounds)
+            all_rewards.append(npz['rewards'])
+            all_regrets.append(npz['regrets'])
 
     # Stack to produce arrays with dims (total_seeds, n_policies, rounds) ready for computing means
     all_rewards = np.stack(all_rewards, axis=0)
@@ -702,5 +701,10 @@ def collate(
     # Save combined raw arrays
     np.savez(path + 'raw_results.npz', all_rewards=all_rewards, all_regrets=all_regrets)
 
+    # Combined arrays are persisted; clean up per-seed intermediate files
+    for seed_file in seed_files:
+        os.remove(seed_file)
+
     print(f"\nCollation complete: {total_seeds} seeds merged.")
+    print(f"Removed {len(seed_files)} per-seed files from {path}")
     print(f"Results saved to {path}")
