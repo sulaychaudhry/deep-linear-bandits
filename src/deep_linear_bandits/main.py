@@ -7,9 +7,11 @@ import shutil
 import math
 import pickle
 import json
+import numpy as np
 
 import deep_linear_bandits.data as dlb_data
 import deep_linear_bandits.two_tower as dlb_tt
+import deep_linear_bandits.simulator as dlb_sim
 
 DLB_DIR = "/dcs/23/u5567816/deep-linear-bandits/"
 DATA_DIR = DLB_DIR + "kuairec/data/"
@@ -196,6 +198,12 @@ def cli() -> None:
     show_default=True,
     help='Maximum size that any individual user categorical side feature can have for its intermediate embedding (use to prevent side features from dominating the ID embedding).'
 )
+@click.option(
+    '--seed',
+    type=int,
+    default=int(np.random.default_rng().integers(0, 2**63)),
+    help='RNG seed for reproducibility. If omitted, a random seed is generated and logged.'
+)
 def train_tt(
     save_name: str,
     watch_threshold: float,
@@ -219,7 +227,8 @@ def train_tt(
     id_emb_dims: int,
     item_cat_emb_dims: int,
     user_cat_emb_root: int,
-    user_cat_emb_cap: int
+    user_cat_emb_cap: int,
+    seed: int
 ) -> None:
     """
     Interface for training the two-tower model.
@@ -236,11 +245,13 @@ def train_tt(
     if os.path.exists(path): shutil.rmtree(path)
     os.makedirs(path)
 
-    print(f"\ntrain_tt flags (logged to {path}flags.txt):")
-    with open(path + 'flags.txt', 'a') as f:
-        for flag_name, flag_arg in flags.items():
-            print(f"    {flag_name}: {str(flag_arg)}")
-            f.write(f"{flag_name}: {str(flag_arg)}\n")
+    # Save all flags so that 'simulate' can retrieve e.g. watch_threshold, output_size
+    # & display the flags to the user
+    with open(path + 'flags.json', 'w') as f:
+        json.dump(flags, f, indent=4)
+    print(f"\ntrain_tt flags (logged to {path}flags.json):")
+    for flag_name, flag_arg in flags.items():
+        print(f"    {flag_name}: {str(flag_arg)}")
 
     # Get training & validation (positive) user-item interactions from KuaiRec-Big
     pos_intrs_train, pos_intrs_val = dlb_data.preprocess_krbig_interactions(DATA_DIR, watch_threshold)
@@ -298,6 +309,11 @@ def train_tt(
     with open(path + 'model_args.pkl', 'wb') as f:
         pickle.dump(model_args, f)
 
+    # Set RNG seeds for reproducibility
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    torch.cuda.manual_seed(seed)
+    
     # Create two-tower model & move to GPU
     # + compile model for faster forward & backward passes
     model = dlb_tt.TwoTower(**model_args).to(device)
@@ -305,27 +321,29 @@ def train_tt(
 
     # Pass training & validation datasets through KRBig for PyTorch batching compatibility
     training_set = dlb_data.KRBig(
-        pos_intrs_train, 
-        user_cat_feats, 
-        user_numeric_feats, 
+        pos_intrs_train,
+        user_cat_feats,
+        user_numeric_feats,
         item_categories
     )
     validation_set = dlb_data.KRBig(
-        pos_intrs_val, 
-        user_cat_feats, 
-        user_numeric_feats, 
+        pos_intrs_val,
+        user_cat_feats,
+        user_numeric_feats,
         item_categories
     )
 
     # Set up DataLoaders for dispatching training & validation batches
     # Use multithreading & pinned memory (between RAM & CUDA) for much quicker retrieval
+    dl_generator = torch.Generator().manual_seed(seed)
     train_loader = DataLoader(
         training_set,
         batch_size=batch_size,
         shuffle=True, # Shuffle per epoch to reduce it from fitting on data order
         num_workers=data_workers,
         pin_memory=(True if torch.accelerator.is_available() else False),
-        persistent_workers=True
+        persistent_workers=True,
+        generator=dl_generator # Needed since shuffle=True
     )
     val_loader = DataLoader(
         validation_set,
@@ -364,10 +382,14 @@ def train_tt(
         )
     )
 
+    # Save model weights (state_dict) so simulate can load them later
+    torch.save(model.state_dict(), path + 'model.pt')
+    print(f"\nModel weights have been saved to {path}model.pt")
+
     # Save metrics
     with open(path + 'metrics.json', 'w') as f:
         json.dump(metrics, f, indent=4)
-    print(f"\nModel metrics have been saved to {path}metrics.json")
+    print(f"Model metrics have been saved to {path}metrics.json")
 
     # Visualise metrics & save to disk
     dlb_tt.visualise(
