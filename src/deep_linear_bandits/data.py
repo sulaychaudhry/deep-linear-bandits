@@ -156,7 +156,7 @@ def preprocess_user_features(
 
     Returns
         (cat_feats, cat_sizes)
-            cat_feats: 
+            cat_feats:
                 a NumPy array of shape [7176, 26]
                 i.e. 26 categorical features for all 7176 users
             cat_sizes:
@@ -218,7 +218,7 @@ def preprocess_user_features(
         vals = (vals - vals.mean()) / (vals.std())
 
         numeric_cols.append(vals)
-    
+
     # Stack the features into 2 matrices (categorical and numeric)
     cat_feats = np.stack(cat_cols, axis=1)
     numeric_feats = np.stack(numeric_cols, axis=1)
@@ -242,9 +242,9 @@ class KRBig(Dataset):
         item_categories: a matrix of all multi-hot-encoded item categories
     """
     def __init__(
-        self, 
-        positive_interactions, 
-        user_cat_feats, 
+        self,
+        positive_interactions,
+        user_cat_feats,
         user_numeric_feats,
         item_categories
     ):
@@ -281,6 +281,8 @@ class KRSmall:
             data_dir: str,
             watch_threshold: float = 2.0
         ):
+        self.data_dir = data_dir
+        
         # Load in the data using Pandas
         krs_df = pd.read_csv(
             data_dir + "small_matrix.csv",
@@ -300,7 +302,7 @@ class KRSmall:
     # Return whole set of users s.t. they're ready to be embedded by the two-tower's user tower
     # i.e. with their features too, but narrowed down just to be small matrix users
     def tower_ready_users(self, device: torch.device):
-        (user_cat_feats, _), user_numeric_feats = preprocess_user_features()
+        (user_cat_feats, _), user_numeric_feats = preprocess_user_features(self.data_dir)
 
         # Narrow down user features to just those of the small matrix users
         user_cat_feats = user_cat_feats[self.unique_user_ids, :]
@@ -322,7 +324,7 @@ class KRSmall:
     def tower_ready_items(self, device: torch.device):
         # Filter out the rows of items that aren't in the small matrix, keep all columns (features)
         # Additionally ensure it's on the GPU for the tower
-        item_categories = preprocess_item_categories()[self.unique_item_ids, :].to(device)
+        item_categories = preprocess_item_categories(self.data_dir)[self.unique_item_ids, :].to(device)
 
         # Convert item IDs to a tensor on GPU for the tower
         item_ids = torch.tensor(self.unique_item_ids, dtype=torch.long, device=device)
