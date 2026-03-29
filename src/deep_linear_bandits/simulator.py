@@ -69,14 +69,14 @@ class RandomPolicy:
             rng: np.random.BitGenerator # RNG instance
     ):
         # Save available items & the RNG
-        self.available = available.detach().clone()
+        self.available = available.detach().clone().cpu().numpy()
         self.rng = rng
 
     def recommend(self, user_id:int) -> int:
         available = self.available[user_id]
 
         # Pick a random available item, using flatnonzero to efficiently get item IDs of available items
-        available = np.flatnonzero(available.cpu().numpy())
+        available = np.flatnonzero(available)
         item_id = self.rng.choice(available)
 
         # Mark chosen item as unavailable for next time this user is in the stream
