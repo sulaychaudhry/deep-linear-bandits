@@ -257,7 +257,7 @@ class ThompsonSampling:
         #       ts_theta = theta + v * Lz
         try:
             L = torch.linalg.cholesky(self.A_inv)
-        except:
+        except torch.linalg.LinAlgError:
             # Sometimes floating-point imprecision means that that the matrix stops being positive-definite
             # This is corrected with adding a small value along the diagonal
             L = torch.linalg.cholesky(
