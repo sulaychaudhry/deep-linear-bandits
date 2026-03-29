@@ -8,6 +8,8 @@ from torch.utils.data import Dataset
 NUM_USERS = 7176
 NUM_ITEMS = 10728
 
+DATA_SPLIT_SEED = 117
+
 def preprocess_krbig_interactions(
         data_dir: str,
         watch_threshold: float = 2.0
@@ -63,7 +65,7 @@ def preprocess_krbig_interactions(
         train_size=0.8,
         shuffle=True,
         stratify=splittable["user_id"],
-        random_state=42
+        random_state=DATA_SPLIT_SEED
     )
     bm_train = pd.concat([bm_train, bm[low_mask]])
 

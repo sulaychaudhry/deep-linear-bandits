@@ -9,6 +9,7 @@ import numpy as np
 from collections import defaultdict
 import matplotlib.pyplot as plt
 from datetime import datetime
+from copy import deepcopy
 
 class UserTower(nn.Module):
     def __init__(
@@ -481,7 +482,7 @@ def train_two_tower(
 
     # Track best validation Recall@(best_k) to decide when to save the model, + save the model by its weights as that's all you need to revert it
     best_recall = -1.0
-    best_weights = model.state_dict()
+    best_weights = deepcopy(model.state_dict())
 
     # Use CrossEntropyLoss as the training objective
     loss_fn = nn.CrossEntropyLoss()
@@ -658,7 +659,7 @@ def train_two_tower(
         # If best Recall@(best_k) has improved, save the model
         rk = metrics[f"recall@{best_k}"][-1]
         if rk > best_recall:
-            best_weights = model.state_dict()
+            best_weights = deepcopy(model.state_dict())
             best_recall = rk
             metrics["best_epoch"] = epoch
 
