@@ -487,6 +487,13 @@ def train_tt(
     default=None,
     help='Run only this one seed (0-indexed out of --seed-count). Intended for parallelising seeds across separate Slurm jobs; use "dlb collate" afterwards to merge results.'
 )
+@click.option(
+    '--longtail-pct',
+    type=click.FloatRange(0.0, 100.0),
+    default=80.0,
+    show_default=True,
+    help='Popularity percentile threshold to use when computing long-tail item coverage.'
+)
 def simulate(
     save_name: str,
     model_name: str,
@@ -500,6 +507,7 @@ def simulate(
     seed_count: int,
     seed: int,
     seed_index: int | None,
+    longtail_pct: float,
 ) -> None:
     """
     Run bandit simulations using the KuaiRec-Small matrix.
@@ -564,6 +572,7 @@ def simulate(
 
     print(f"\nLoading KuaiRec-Small (watch_threshold={watch_threshold})...")
     small_matrix = dlb_data.KRSmall(DATA_DIR, watch_threshold)
+    item_popularity = dlb_data.compute_item_popularity(DATA_DIR, small_matrix.unique_item_ids, watch_threshold)
 
     # Build context vectors in inference mode (much faster, gradient calculations not needed)
     print(f"Building context vectors (hadamard={hadamard})...")

@@ -71,6 +71,34 @@ def preprocess_krbig_interactions(
 
     return bm_train, bm_val # dataframes
 
+def compute_item_popularity(
+    data_dir: str,
+    unique_item_ids: np.ndarray,
+    watch_threshold: float = 2.0
+) -> np.ndarray:
+    """
+    Compute popularity of each small matrix item as its positive interaction frequency in the big matrix
+    (with same preprocessing that two-tower applies for consistency of evaluation).
+
+    Returns
+        popularity: NumPy array of all positive interaction counts for small matrix items passed
+    """
+
+    # Re-read big matrix as the `simulate` CLI path doesn't necessarily need a big matrix read otherwise
+    bm = pd.read_csv(
+        data_dir + "big_matrix.csv",
+        usecols=["user_id", "video_id", "watch_ratio"]
+    )
+    bm = (
+        bm[bm["watch_ratio"] >= watch_threshold]
+        .drop(columns=["watch_ratio"])
+        .drop_duplicates()
+    )
+    counts = bm["video_id"].value_counts()
+
+    # Reindex gets the counts just for the small matrix items & in its order
+    return counts.reindex(unique_item_ids, fill_value=0).to_numpy(dtype=np.float64)
+
 def preprocess_item_categories(
     data_dir: str
 ) -> torch.Tensor:
