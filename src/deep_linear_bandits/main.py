@@ -488,7 +488,7 @@ def train_tt(
     help='Run only this one seed (0-indexed out of --seed-count). Intended for parallelising seeds across separate Slurm jobs; use "dlb collate" afterwards to merge results.'
 )
 @click.option(
-    '--longtail-pct',
+    '--longtail-percentile',
     type=click.FloatRange(0.0, 100.0),
     default=80.0,
     show_default=True,
@@ -507,7 +507,7 @@ def simulate(
     seed_count: int,
     seed: int,
     seed_index: int | None,
-    longtail_pct: float,
+    longtail_percentile: float,
 ) -> None:
     """
     Run bandit simulations using the KuaiRec-Small matrix.
@@ -604,7 +604,13 @@ def simulate(
     if seed_index is not None:
         # Save only this seed's data, ready for collating
         npz_path = path + f'seed_{seed_index}.npz'
-        np.savez(npz_path, rewards=results['rewards'], regrets=results['regrets'])
+        np.savez(
+            npz_path,
+            rewards=results['rewards'],
+            regrets=results['regrets'],
+            recommendations=results['recommendations'],
+            item_popularity=item_popularity
+        )
         print(f"\nSeed {seed_index} results saved to {npz_path}")
         print(f"Run 'dlb collate --save-name {save_name}' after all seeds complete to generate plots & metrics.")
 
@@ -618,19 +624,34 @@ def simulate(
         simulator._visualise_regrets(seed_count, labels, regrets, path)
         print(f"Reward (rewards.png) & regret (regrets.png) plots saved to {path}")
 
+        # Compute all metrics (reward/regret curves + diversity metrics) across seeds
+        metrics = dlb_sim.compute_all_metrics(
+            results["all_rewards"],
+            results["all_regrets"],
+            results["all_recommendations"],
+            item_popularity,
+            longtail_percentile
+        )
+
         # For human-readable view of metrics
         metrics_out = {
             'labels': labels,
             'seed': seed,
             'seed_count': seed_count,
-            'mean_cumulative_rewards': np.cumsum(rewards, axis=1).tolist(),
-            'mean_cumulative_regrets': np.cumsum(regrets, axis=1).tolist(),
+            'longtail_percentile': longtail_percentile,
+            **metrics # & the rest of metrics
         }
         with open(path + 'metrics.json', 'w') as f:
             json.dump(metrics_out, f, indent=4)
 
-        # For efficient access of metrics if needed again
-        np.savez(path + 'raw_results.npz', all_rewards=results["all_rewards"], all_regrets=results["all_regrets"])
+        # For efficient access of all raw data just in case needed again (if BCS busy etc)
+        np.savez(
+            path + 'raw_results.npz',
+            all_rewards=results["all_rewards"],
+            all_regrets=results["all_regrets"],
+            all_recommendations=results["all_recommendations"],
+            item_popularity=item_popularity
+        )
         print(f"Simulation complete. Results saved to {path}")
 
 @cli.command('collate')
@@ -670,6 +691,8 @@ def collate(
         )
     print(f"\nCollating {seed_count} seed files from {path}...")
 
+    longtail_percentile = float(flags.get('longtail_percentile', 80.0)) # Just in case read from JSON as integer
+
     labels = (
         ["Greedy", "Random"]
         + [f"ε-greedy (ε={e})" for e in flags['epsilon']]
@@ -678,38 +701,59 @@ def collate(
     )
 
     # Collect simulation arrays
-    all_rewards = []
-    all_regrets = []
+    all_rewards         = []
+    all_regrets         = []
+    all_recommendations = []
+    item_popularity     = None
     for seed_file in seed_files:
         with np.load(seed_file) as npz:
             # Each has dims (n_policies, rounds)
             all_rewards.append(npz['rewards'])
             all_regrets.append(npz['regrets'])
+            all_recommendations.append(npz['recommendations'])
+            if item_popularity is None:
+                item_popularity = npz['item_popularity']
 
     # Stack to produce arrays with dims (total_seeds, n_policies, rounds) ready for computing means
     all_rewards = np.stack(all_rewards, axis=0)
     all_regrets = np.stack(all_regrets, axis=0)
+    all_recommendations = np.stack(all_recommendations, axis=0)
 
-    # Compute mean & visualise
+    # Compute means ready for plotting
     mean_rewards = all_rewards.mean(axis=0)
     mean_regrets = all_regrets.mean(axis=0)
     total_seeds = all_rewards.shape[0]
     dlb_sim.Simulator._visualise_rewards(total_seeds, labels, mean_rewards, path)
     dlb_sim.Simulator._visualise_regrets(total_seeds, labels, mean_regrets, path)
 
-    # Save metrics
+    # Compute all metrics (reward/regret curves + diversity metrics) across seeds
+    computed = dlb_sim.compute_all_metrics(
+        all_rewards,
+        all_regrets,
+        all_recommendations,
+        item_popularity,
+        longtail_percentile
+    )
+
+    # Save metrics (human-readable)
     metrics_out = {
         'labels': labels,
         'seed': flags['seed'],
         'seed_count': total_seeds,
-        'mean_cumulative_rewards': np.cumsum(mean_rewards, axis=1).tolist(),
-        'mean_cumulative_regrets': np.cumsum(mean_regrets, axis=1).tolist(),
+        'longtail_percentile': longtail_percentile,
+        **computed
     }
     with open(path + 'metrics.json', 'w') as f:
         json.dump(metrics_out, f, indent=4)
 
     # Save combined raw arrays
-    np.savez(path + 'raw_results.npz', all_rewards=all_rewards, all_regrets=all_regrets)
+    np.savez(
+        path + 'raw_results.npz',
+        all_rewards=all_rewards,
+        all_regrets=all_regrets,
+        all_recommendations=all_recommendations,
+        item_popularity=item_popularity
+    )
 
     # Combined arrays are persisted; clean up per-seed intermediate files
     for seed_file in seed_files:

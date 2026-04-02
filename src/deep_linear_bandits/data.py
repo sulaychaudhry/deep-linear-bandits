@@ -28,8 +28,8 @@ def preprocess_krbig_interactions(
     factors.
 
     Returns
-    bm_train: Pandas dataframe containing training interactions
-    bm_val: Pandas dataframe containing validation interactions
+        bm_train: Pandas dataframe containing training interactions
+        bm_val: Pandas dataframe containing validation interactions
 
     Each of these dataframes have cols
         | user_id | video_id |
@@ -96,7 +96,7 @@ def compute_item_popularity(
     )
     counts = bm["video_id"].value_counts()
 
-    # Reindex gets the counts just for the small matrix items & in its order
+    # Reindex gets the counts just for the small matrix items & in its order, set up ready for actual item ID indexing
     return counts.reindex(unique_item_ids, fill_value=0).to_numpy(dtype=np.float64)
 
 def preprocess_item_categories(

@@ -8,6 +8,107 @@ from datetime import datetime
 SMALL_USERS = 1411
 SMALL_ITEMS = 3327
 
+def gini_coefficient(recommendations: np.ndarray) -> float:
+    """
+    Computes the Gini coefficient over recommendation frequencies.
+    A value of 0 means perfectly uniform coverage; 1 means all recommendations go to a single item.
+    """
+
+    # Bin the item ID counts & collect sum
+    counts = np.bincount(recommendations, minlength=SMALL_ITEMS).astype(np.float64)
+    total = counts.sum()
+    if total == 0: return 0.0
+
+    # Use this efficient formula: https://en.wikipedia.org/wiki/Gini_coefficient#Alternative_expressions
+    y = np.sort(counts)
+    n = len(y)
+    index = np.arange(1, n + 1)
+    return ((2 * np.dot(index, y)) / (n * total) - (n + 1) / n)
+
+
+def longtail_coverage(
+    recommendations: np.ndarray,
+    item_popularities: np.ndarray,
+    percentile: float = 80.0
+) -> float:
+    """
+    Fraction of long-tail items i.e. items whose popularity is strictly below `percentile` that were recommended at least once.
+    """
+
+    # Determine exactly which items fall below the threshold
+    threshold = np.percentile(item_popularities, percentile)
+    longtail_mask = item_popularities < threshold
+    longtail_items = np.where(longtail_mask)[0]
+    if len(longtail_items) == 0: return 0.0
+
+    # Check which ones were recommended & count
+    recommended_set = np.unique(recommendations)
+    covered = np.isin(longtail_items, recommended_set).sum()
+    return covered / len(longtail_items)
+
+
+def average_recommendation_popularity(
+    recommendations: np.ndarray,
+    item_popularities: np.ndarray
+) -> float:
+    """
+    Average popularity of recommended items across all rounds.
+    """
+    return item_popularities[recommendations].mean()
+
+
+def compute_all_metrics(
+    all_rewards: np.ndarray,           # (seeds, policies, rounds)
+    all_regrets: np.ndarray,           # (seeds, policies, rounds)
+    all_recommendations: np.ndarray,   # (seeds, policies, rounds)
+    item_popularities: np.ndarray,     # (n_items,)
+    longtail_percentile: float = 80.0
+) -> dict:
+    """
+    Aggregates all metrics (rewards, regrets, diversity) across seeds.
+
+    Returns a dict with mean/std for cumulative rewards/regrets (full curves + final values) and mean/std
+    for Gini, long-tail coverage, and ARP per policy.
+    """
+    seed_count, n_policies, _ = all_rewards.shape
+
+    all_cum_rewards = np.cumsum(all_rewards, axis=2)
+    all_cum_regrets = np.cumsum(all_regrets, axis=2)
+
+    # Per-seed-per-policy diversity metrics
+    all_gini = np.empty((seed_count, n_policies))
+    all_coverage = np.empty((seed_count, n_policies))
+    all_arp = np.empty((seed_count, n_policies))
+    for s in range(seed_count):
+        for p in range(n_policies):
+            recs = all_recommendations[s, p]
+            all_gini[s, p] = gini_coefficient(recs)
+            all_coverage[s, p] = longtail_coverage(recs, item_popularities, longtail_percentile)
+            all_arp[s, p] = average_recommendation_popularity(recs, item_popularities)
+
+    return {
+        "mean_cumulative_rewards":        all_cum_rewards.mean(axis=0).tolist(),
+        "std_cumulative_rewards":         all_cum_rewards.std(axis=0).tolist(),
+
+        "mean_cumulative_regrets":        all_cum_regrets.mean(axis=0).tolist(),
+        "std_cumulative_regrets":         all_cum_regrets.std(axis=0).tolist(),
+
+        "mean_final_cumulative_rewards":  all_cum_rewards.mean(axis=0)[:, -1].tolist(),
+        "std_final_cumulative_rewards":   all_cum_rewards.std(axis=0)[:, -1].tolist(),
+
+        "mean_final_cumulative_regrets":  all_cum_regrets.mean(axis=0)[:, -1].tolist(),
+        "std_final_cumulative_regrets":   all_cum_regrets.std(axis=0)[:, -1].tolist(),
+
+        "mean_gini":                      all_gini.mean(axis=0).tolist(),
+        "std_gini":                       all_gini.std(axis=0).tolist(),
+
+        "mean_longtail_coverage":         all_coverage.mean(axis=0).tolist(),
+        "std_longtail_coverage":          all_coverage.std(axis=0).tolist(),
+
+        "mean_arp":                       all_arp.mean(axis=0).tolist(),
+        "std_arp":                        all_arp.std(axis=0).tolist(),
+    }
+
 def build_two_tower_contexts(
         user_embeddings: torch.Tensor,  # (U, D)
         item_embeddings: torch.Tensor,  # (I, D)
@@ -473,6 +574,7 @@ class Simulator:
         # Simulate rounds
         rewards = np.empty((len(policies), rounds), dtype=bool)
         regrets = np.empty((len(policies), rounds), dtype=bool)
+        recommendations = np.empty((len(policies), rounds), dtype=np.int16)
         for round in trange(rounds, desc=f"Simulation {simulation_num}"):
             # Retrieve the random user for this round
             user_id = stream[round]
@@ -486,9 +588,10 @@ class Simulator:
                 item_rec = policy.recommend(user_id)
                 reward = self.rewards[user_id, item_rec]
 
-                # Record reward & regret
+                # Record reward, regret, and recommendation
                 rewards[i, round] = reward
                 regrets[i, round] = oracle_reward and not reward # Reward available but not achieved
+                recommendations[i, round] = item_rec
 
                 # Update oracle
                 if reward: pos_count[i, user_id] -= 1
@@ -496,7 +599,7 @@ class Simulator:
                 # Update policy (allow bandits to update their ridge regression)
                 policy.update(user_id, item_rec, reward)
 
-        return rewards, regrets
+        return rewards, regrets, recommendations
 
     def run(
             self,
@@ -526,18 +629,19 @@ class Simulator:
         # Dispatched over multiple Slurm jobs - this is just one of them
         if seed_index is not None:
             idx = seed_index if seed_index is not None else 0
-            rewards, regrets = self._run_one_seed(
+            rewards, regrets, recommendations = self._run_one_seed(
                 idx, streams[idx], e_greedy_epsilons, linucb_alphas, ts_vs, lam, rounds, child_seeds[idx]
             )
-            return {"labels": labels, "rewards": rewards, "regrets": regrets}
+            return {"labels": labels, "rewards": rewards, "regrets": regrets, "recommendations": recommendations}
 
         # All seeds are within this process
         else:
             n_policies = len(labels)
             all_rewards = np.empty((seed_count, n_policies, rounds), dtype=float)
             all_regrets = np.empty((seed_count, n_policies, rounds), dtype=float)
+            all_recommendations = np.empty((seed_count, n_policies, rounds), dtype=np.int16)
             for i in range(seed_count):
-                all_rewards[i], all_regrets[i] = self._run_one_seed(
+                all_rewards[i], all_regrets[i], all_recommendations[i] = self._run_one_seed(
                     i, streams[i], e_greedy_epsilons, linucb_alphas, ts_vs, lam, rounds, child_seeds[i]
                 )
 
@@ -547,4 +651,5 @@ class Simulator:
                 "mean_regrets": all_regrets.mean(axis=0),
                 "all_rewards": all_rewards,
                 "all_regrets": all_regrets,
+                "all_recommendations": all_recommendations,
             }
