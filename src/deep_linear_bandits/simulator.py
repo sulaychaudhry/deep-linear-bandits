@@ -547,16 +547,19 @@ class Simulator:
             rounds: int,
             seed: int
     ) -> tuple[np.ndarray, np.ndarray]:
+        # Derive independent per-policy RNGs from the seed so policies don't share state; more methodologically sound
         rng = np.random.default_rng(seed)
+        n_rngs = 1 + len(e_greedy_epsilons)  # RandomPolicy + each EpsilonGreedy
+        policy_rngs = rng.spawn(n_rngs)
 
         # Set up policies
         policies = {
             "Greedy": GreedyPolicy(self.greedy_items, self.available.cpu().numpy()),
-            "Random": RandomPolicy(self.available, rng)
+            "Random": RandomPolicy(self.available, policy_rngs[0])
         }
-        for eps in e_greedy_epsilons:
+        for i, eps in enumerate(e_greedy_epsilons):
             policies[f"ε-greedy (ε={eps})"] = EpsilonGreedy(
-                self.device, self.contexts, self.available, rng, epsilon=eps, lam=lam
+                self.device, self.contexts, self.available, policy_rngs[1 + i], epsilon=eps, lam=lam
             )
         for alpha in linucb_alphas:
             policies[f"LinUCB (α={alpha})"] = LinUCB(
