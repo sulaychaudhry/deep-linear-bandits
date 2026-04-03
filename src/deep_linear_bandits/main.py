@@ -571,7 +571,6 @@ def simulate(
             weights_only=True
         )
     )
-    model.compile()
     model.eval()
     print(f"\nLoaded two-tower model from {model_path}")
 
@@ -595,9 +594,15 @@ def simulate(
 
     print(f"Context shape: {tuple(contexts.shape)} (D={contexts.shape[-1]})")
 
+    # Convert to numpy for CPU-based simulation (avoids GPU overhead in per-round loop)
+    # The work is mostly CPU-bound anyway & Batch Compute System GPU nodes are scarce
+    contexts_np = contexts.cpu().numpy()
+    user_embeddings_np = user_embeddings.cpu().numpy()
+    item_embeddings_np = item_embeddings.cpu().numpy()
+
     # Create simulator & run
     print("\nRunning the simulator...")
-    simulator = dlb_sim.Simulator(device, small_matrix, contexts, user_embeddings, item_embeddings)
+    simulator = dlb_sim.Simulator(small_matrix, contexts_np, user_embeddings_np, item_embeddings_np)
     results = simulator.run(
         seed_count=seed_count,
         rounds=rounds,

@@ -94,12 +94,12 @@ def compute_ba_metrics_over_time(
         for s in range(seed_count):
             for p in range(n_policies):
                 recs = all_recommendations[s, p, :t]
+                unique_recs = np.unique(recs)
 
                 all_gini[s, p, ci] = gini_coefficient(recs)
 
                 if n_longtail > 0:
-                    covered = np.isin(longtail_items, np.unique(recs)).sum()
-                    all_coverage[s, p, ci] = covered / n_longtail
+                    all_coverage[s, p, ci] = np.isin(longtail_items, unique_recs).sum() / n_longtail
                 else:
                     all_coverage[s, p, ci] = 0.0
 
@@ -251,11 +251,11 @@ class GreedyPolicy:
 class RandomPolicy:
     def __init__(
             self,
-            available: torch.Tensor,    # (1411, 3327, D)
-            rng: np.random.BitGenerator # RNG instance
+            available: np.ndarray,      # (1411, 3327)
+            rng: np.random.Generator    # RNG instance
     ):
         # Save available items & the RNG
-        self.available = available.detach().clone().cpu().numpy()
+        self.available = available.copy()
         self.rng = rng
 
     def recommend(self, user_id:int) -> int:
@@ -275,23 +275,21 @@ class RandomPolicy:
 class LinUCB:
     def __init__(
             self,
-            device: torch.device,
-            contexts: torch.Tensor,    # (1411, 3327, D)
-            available: torch.Tensor,   # (1411, 3327)
+            contexts: np.ndarray,      # (1411, 3327, D)
+            available: np.ndarray,     # (1411, 3327)
 
             alpha: float = 0.5,        # Exploration bonus
             lam: float = 1.0           # Ridge regularisation penalty (weight decay)
     ):
-        self.device = device
         self.contexts = contexts
-        self.available = available.detach().clone() # Needs copying so that it can be modified
+        self.available = available.copy() # Needs copying so that it can be modified
         self.alpha = alpha
 
         # Set up A_inv, which starts as (1 / lambda) * I
-        self.A_inv = (1 / lam) * torch.eye(contexts.shape[-1], device=self.device) # (D, D)
+        self.A_inv = np.eye(contexts.shape[-1]) / lam  # (D, D)
 
         # Set up b, which starts as 0
-        self.b = torch.zeros(contexts.shape[-1], device=self.device)               # (D,)
+        self.b = np.zeros(contexts.shape[-1])           # (D,)
 
     def recommend(self, user_id: int) -> int:
         # Compute (theta = A_inv @ b) where theta is the current best estimate of the linear weights
@@ -307,18 +305,18 @@ class LinUCB:
         #       alpha * sqrt(c^T @ A_inv @ c)
         # i.e. each c has A_inv applied to it, then dot producted with the original c; before sqrt and alpha
         C = Psi @ self.A_inv
-        exploration = self.alpha * torch.sqrt(
-            (C * Psi).sum(dim=1)
+        exploration = self.alpha * np.sqrt(
+            (C * Psi).sum(axis=1)
         )
 
         # UCB scores are just reward estimates + exploration bonuses
         scores = rewards + exploration
 
         # Now mask out unavailable (no interaction or already shown) items
-        scores[~self.available[user_id]] = -torch.inf
+        scores[~self.available[user_id]] = -np.inf
 
         # Pick item with highest UCB score
-        item_id = scores.argmax().item()
+        item_id = scores.argmax()
 
         # Mark chosen item as unavailable now too
         self.available[user_id, item_id] = False
@@ -338,7 +336,7 @@ class LinUCB:
         # (A + psi psi^T)_inv = A_inv - (A_inv psi psi^T A_inv) / (1 + psi^T A_inv psi)
         #                     = A_inv - (outer(A_inv psi, A_inv psi)) / (1 + psi^T A_inv psi)
         C = self.A_inv @ psi
-        self.A_inv -= torch.outer(C, C) / (1 + psi.t() @ C)
+        self.A_inv -= np.outer(C, C) / (1 + psi @ C)
 
         # Update b trivially
         self.b += reward * psi
@@ -346,24 +344,22 @@ class LinUCB:
 class EpsilonGreedy:
     def __init__(
             self,
-            device: torch.device,
-            contexts: torch.Tensor,         # (1411, 3327, D)
-            available: torch.Tensor,        # (1411, 3327)
+            contexts: np.ndarray,           # (1411, 3327, D)
+            available: np.ndarray,          # (1411, 3327)
 
-            rng: np.random.BitGenerator,    # RNG instance
+            rng: np.random.Generator,       # RNG instance
 
             epsilon: float = 0.1,           # Random exploration probability
             lam: float = 1.0                # Ridge regularisation penalty (weight decay)
     ):
-        self.device = device
         self.contexts = contexts
-        self.available = available.detach().clone() # Needs copying so that it can be modified
+        self.available = available.copy() # Needs copying so that it can be modified
         self.epsilon = epsilon
         self.rng = rng
 
         # Set up posteriors (same as LinUCB, TS)
-        self.A_inv = (1 / lam) * torch.eye(contexts.shape[-1], device=self.device) # (D, D)
-        self.b = torch.zeros(contexts.shape[-1], device=self.device)               # (D,)
+        self.A_inv = np.eye(contexts.shape[-1]) / lam  # (D, D)
+        self.b = np.zeros(contexts.shape[-1])           # (D,)
 
     def recommend(self, user_id:int) -> int:
         available = self.available[user_id]
@@ -373,8 +369,7 @@ class EpsilonGreedy:
             # Exploration: pick uniformly from available items
 
             # Use flatnonzero to efficiently get item IDs (indices) of available items
-            available = np.flatnonzero(available.cpu().numpy())
-            item_id = self.rng.choice(available)
+            item_id = self.rng.choice(np.flatnonzero(available))
         else:
             # Exploitation: pick item with highest estimated reward (wrt the linear regression)
 
@@ -384,9 +379,9 @@ class EpsilonGreedy:
             scores = Psi @ theta
 
             # Masking out unavailable items before picking one
-            scores[~available] = -torch.inf
+            scores[~available] = -np.inf
 
-            item_id = scores.argmax().item()
+            item_id = scores.argmax()
 
         # Mark chosen item as unavailable
         self.available[user_id, item_id] = False
@@ -401,7 +396,7 @@ class EpsilonGreedy:
 
         # Update A_inv using Sherman-Morrison
         C = self.A_inv @ psi
-        self.A_inv -= torch.outer(C, C) / (1 + psi.t() @ C)
+        self.A_inv -= np.outer(C, C) / (1 + psi @ C)
 
         # Update b trivially
         self.b += reward * psi
@@ -409,21 +404,22 @@ class EpsilonGreedy:
 class ThompsonSampling:
     def __init__(
             self,
-            device: torch.device,
-            contexts: torch.Tensor,    # (1411, 3327, D)
-            available: torch.Tensor,   # (1411, 3327)
+            contexts: np.ndarray,      # (1411, 3327, D)
+            available: np.ndarray,     # (1411, 3327)
+
+            rng: np.random.Generator,  # RNG instance (for reproducible posterior sampling)
 
             v: float = 1.0,            # Posterior variance scale (higher increases distribution spread, exploration)
             lam: float = 1.0
     ):
-        self.device = device
         self.contexts = contexts
-        self.available = available.detach().clone() # Needs copying so that it can be modified
+        self.available = available.copy() # Needs copying so that it can be modified
+        self.rng = rng
         self.v = v
 
         # Set up posteriors (same as LinUCB, EpsilonGreedy)
-        self.A_inv = (1 / lam) * torch.eye(contexts.shape[-1], device=self.device) # (D, D)
-        self.b = torch.zeros(contexts.shape[-1], device=self.device)               # (D,)
+        self.A_inv = np.eye(contexts.shape[-1]) / lam  # (D, D)
+        self.b = np.zeros(contexts.shape[-1])           # (D,)
 
     def recommend(self, user_id: int) -> int:
         # Compute (theta = A_inv @ b) where theta is the current best estimate of the linear weights
@@ -438,28 +434,28 @@ class ThompsonSampling:
         # This is efficiently done in practice through Cholesky decomposition to transform standard normal samples
         #       ts_theta = theta + Lz       where z ~ N(0, 1)
         #                                   & L satisfies L L^T = v^2 A_inv
-        # L can be computed through torch.linalg.cholesky
+        # L can be computed through np.linalg.cholesky
         # Additionally v^2 can be factored out, giving:
         #       ts_theta = theta + v * Lz
         try:
-            L = torch.linalg.cholesky(self.A_inv)
-        except torch.linalg.LinAlgError:
+            L = np.linalg.cholesky(self.A_inv)
+        except np.linalg.LinAlgError:
             # Sometimes floating-point imprecision means that that the matrix stops being positive-definite
             # This is corrected with adding a small value along the diagonal
-            L = torch.linalg.cholesky(
-                self.A_inv + 1e-6 * torch.eye(self.A_inv.shape[0], device=self.device)
+            L = np.linalg.cholesky(
+                self.A_inv + 1e-6 * np.eye(self.A_inv.shape[0])
             )
-        z = torch.randn(self.A_inv.shape[0], device=self.device)
+        z = self.rng.standard_normal(self.A_inv.shape[0])
         theta += self.v * (L @ z)
 
         # Now score all contexts using the sampled linear parameters
         scores = Psi @ theta
 
         # Mask out unavailable items
-        scores[~self.available[user_id]] = -torch.inf
+        scores[~self.available[user_id]] = -np.inf
 
         # Pick item with highest score
-        item_id = scores.argmax().item()
+        item_id = scores.argmax()
 
         # Mark chosen item as unavailable
         self.available[user_id, item_id] = False
@@ -477,27 +473,24 @@ class ThompsonSampling:
 
         # Update A_inv using Sherman-Morrison
         C = self.A_inv @ psi
-        self.A_inv -= torch.outer(C, C) / (1 + psi.t() @ C)
+        self.A_inv -= np.outer(C, C) / (1 + psi @ C)
 
         # Update b trivially
         self.b += reward * psi
 
 class Simulator:
-    @torch.inference_mode()
     def __init__(
             self,
-            device: torch.device,
             small_matrix: KRSmall,
-            contexts: torch.Tensor,
-            user_embeddings: torch.Tensor,
-            item_embeddings: torch.Tensor
+            contexts: np.ndarray,
+            user_embeddings: np.ndarray,
+            item_embeddings: np.ndarray
     ):
-        self.device = device
         self.contexts = contexts
 
         # Compute a matrix to indicate all interactions that are 'valid' i.e. don't need masking out
         # This is because despite 99.7% density, some interactions are missing
-        self.available = torch.zeros(SMALL_USERS, SMALL_ITEMS, dtype=torch.bool, device=device)
+        self.available = np.zeros((SMALL_USERS, SMALL_ITEMS), dtype=bool)
         self.available[small_matrix.intr_new_uids, small_matrix.intr_new_iids] = True
 
         # Also compute a ground truth reward matrix for all positive user-item interactions
@@ -507,7 +500,7 @@ class Simulator:
         # Precompute dot-product similarity scores for GreedyPolicy
         # This can be used immediately to derive the item IDs for GreedyPolicy as it has fixed behaviour
         dot_products = user_embeddings @ item_embeddings.T
-        self.greedy_items = torch.sort(dot_products, dim=1, descending=True).indices.cpu().numpy()
+        self.greedy_items = np.argsort(-dot_products, axis=1)
 
     def _run_one_seed(
             self,
@@ -522,25 +515,25 @@ class Simulator:
     ) -> tuple[np.ndarray, np.ndarray]:
         # Derive independent per-policy RNGs from the seed so policies don't share state; more methodologically sound
         rng = np.random.default_rng(seed)
-        n_rngs = 1 + len(e_greedy_epsilons)  # RandomPolicy + each EpsilonGreedy
+        n_rngs = 1 + len(e_greedy_epsilons) + len(ts_vs)  # RandomPolicy + each EpsilonGreedy + each TS
         policy_rngs = rng.spawn(n_rngs)
 
         # Set up policies
         policies = {
-            "Greedy": GreedyPolicy(self.greedy_items, self.available.cpu().numpy()),
+            "Greedy": GreedyPolicy(self.greedy_items, self.available),
             "Random": RandomPolicy(self.available, policy_rngs[0])
         }
         for i, eps in enumerate(e_greedy_epsilons):
             policies[f"ε-greedy (ε={eps})"] = EpsilonGreedy(
-                self.device, self.contexts, self.available, policy_rngs[1 + i], epsilon=eps, lam=lam
+                self.contexts, self.available, policy_rngs[1 + i], epsilon=eps, lam=lam
             )
         for alpha in linucb_alphas:
             policies[f"LinUCB (α={alpha})"] = LinUCB(
-                self.device, self.contexts, self.available, alpha=alpha, lam=lam
+                self.contexts, self.available, alpha=alpha, lam=lam
             )
-        for v in ts_vs:
+        for i, v in enumerate(ts_vs):
             policies[f"TS (ʋ={v})"] = ThompsonSampling(
-                self.device, self.contexts, self.available, v=v, lam=lam
+                self.contexts, self.available, policy_rngs[1 + len(e_greedy_epsilons) + i], v=v, lam=lam
             )
 
         # Calculate the oracle: how many positives exist per user?
