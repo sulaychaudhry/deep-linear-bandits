@@ -15,7 +15,10 @@ import deep_linear_bandits.two_tower as dlb_tt
 import deep_linear_bandits.simulator as dlb_sim
 import deep_linear_bandits.plot as dlb_plot
 
-DLB_DIR = "/dcs/23/u5567816/deep-linear-bandits/"
+# Get DLB_DIR from environment instead; can export this from the slurm scripts
+DLB_DIR = os.environ.get("DLB_DIR", os.getcwd())
+if not DLB_DIR.endswith("/"):
+    DLB_DIR += "/"
 DATA_DIR = DLB_DIR + "kuairec/data/"
 
 # Set up device for PyTorch to use the GPU (if available)

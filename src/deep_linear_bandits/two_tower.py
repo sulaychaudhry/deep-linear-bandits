@@ -8,7 +8,6 @@ from tqdm import tqdm
 import numpy as np
 from collections import defaultdict
 import matplotlib.pyplot as plt
-from datetime import datetime
 from copy import deepcopy
 
 class UserTower(nn.Module):
@@ -749,6 +748,5 @@ def visualise(
     ax_ndcg.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
     plt.savefig(save_path)
     plt.close()

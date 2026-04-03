@@ -598,7 +598,7 @@ class Simulator:
 
         # Dispatched over multiple Slurm jobs - this is just one of them
         if seed_index is not None:
-            idx = seed_index if seed_index is not None else 0
+            idx = seed_index
             rewards, regrets, recommendations = self._run_one_seed(
                 idx, streams[idx], e_greedy_epsilons, linucb_alphas, ts_vs, lam, rounds, child_seeds[idx]
             )

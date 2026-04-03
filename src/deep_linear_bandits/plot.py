@@ -140,7 +140,7 @@ def plot_ba_metric_over_time(
     fig, axes = plt.subplots(1, 3, figsize=(18, 6))
     fig.suptitle(
         f"Policy simulation: {metric_name} over time"
-        + (f"(threshold: {longtail_percentile:.1f}%)" if longtail_percentile else "")
+        + (f" (threshold: {longtail_percentile:.1f}%)" if longtail_percentile else "")
     )
 
     # Plot all policy metric means (the cumulative ones) alongside the std-deviations too
@@ -247,7 +247,7 @@ def generate_all_plots(
         all_coverage = raw_results['all_coverage']
         all_arp = raw_results['all_arp']
     else:
-        metric_rounds, all_gini, all_coverage, all_arp = dlb_sim.compute_metrics_over_time(
+        metric_rounds, all_gini, all_coverage, all_arp = dlb_sim.compute_ba_metrics_over_time(
             all_recommendations, item_popularity, metric_interval, longtail_percentile
         )
 
