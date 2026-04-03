@@ -8,11 +8,12 @@ import math
 import pickle
 import json
 import numpy as np
-import glob as globmod
+import glob
 
 import deep_linear_bandits.data as dlb_data
 import deep_linear_bandits.two_tower as dlb_tt
 import deep_linear_bandits.simulator as dlb_sim
+import deep_linear_bandits.plot as dlb_plot
 
 DLB_DIR = "/dcs/23/u5567816/deep-linear-bandits/"
 DATA_DIR = DLB_DIR + "kuairec/data/"
@@ -494,6 +495,13 @@ def train_tt(
     show_default=True,
     help='Popularity percentile threshold to use when computing long-tail item coverage.'
 )
+@click.option(
+    '--metric-interval',
+    type=click.IntRange(1),
+    default=500,
+    show_default=True,
+    help='Round interval at which beyond-accuracy metrics (Gini, coverage, ARP) are recorded over time.'
+)
 def simulate(
     save_name: str,
     model_name: str,
@@ -508,6 +516,7 @@ def simulate(
     seed: int,
     seed_index: int | None,
     longtail_percentile: float,
+    metric_interval: int,
 ) -> None:
     """
     Run bandit simulations using the KuaiRec-Small matrix.
@@ -619,30 +628,41 @@ def simulate(
         rewards = results['mean_rewards']
         regrets = results['mean_regrets']
 
-        # Plot reward + regret as all seeds have data available
-        simulator._visualise_rewards(seed_count, labels, rewards, path)
-        simulator._visualise_regrets(seed_count, labels, regrets, path)
-        print(f"Reward (rewards.png) & regret (regrets.png) plots saved to {path}")
-
         # Compute all metrics (reward/regret curves + diversity metrics) across seeds
-        metrics = dlb_sim.compute_all_metrics(
+        metrics, raw_arrays = dlb_sim.compute_all_metrics(
             results["all_rewards"],
             results["all_regrets"],
             results["all_recommendations"],
             item_popularity,
-            longtail_percentile
+            longtail_percentile,
+            metric_interval
         )
 
-        # For human-readable view of metrics
-        metrics_out = {
-            'labels': labels,
-            'seed': seed,
-            'seed_count': seed_count,
-            'longtail_percentile': longtail_percentile,
-            **metrics # & the rest of metrics
-        }
+        # Generate all plots, using `plot.py` now instead for separation of concerns
+        # Note that this means that I can use the BCS to retrieve metrics and alter plots etc still
+        # Plus just makes the CLI easier to use
+        dlb_plot.plot_rewards(seed_count, labels, rewards, path)
+        dlb_plot.plot_regrets(seed_count, labels, regrets, path)
+        dlb_plot.plot_ba_metrics_over_time(
+            raw_arrays['metric_rounds'],
+            raw_arrays['all_gini'],
+            raw_arrays['all_coverage'],
+            raw_arrays['all_arp'],
+            labels,
+            path,
+            longtail_percentile,
+        )
+        print(f"Plots saved to {path}")
+
+        # Save human-readable metrics (without raw data i.e. individual seed data, so it's all merged)
         with open(path + 'metrics.json', 'w') as f:
-            json.dump(metrics_out, f, indent=4)
+            json.dump({
+                'labels':              labels,
+                'seed':                seed,
+                'seed_count':          seed_count,
+                'longtail_percentile': longtail_percentile, 
+                **metrics
+            }, f, indent=4)
 
         # For efficient access of all raw data just in case needed again (if BCS busy etc)
         np.savez(
@@ -650,7 +670,8 @@ def simulate(
             all_rewards=results["all_rewards"],
             all_regrets=results["all_regrets"],
             all_recommendations=results["all_recommendations"],
-            item_popularity=item_popularity
+            item_popularity=item_popularity,
+            **raw_arrays,
         )
         print(f"Simulation complete. Results saved to {path}")
 
@@ -684,7 +705,7 @@ def collate(
 
     # Validate seed files by count: require exactly one per expected seed
     seed_count = int(flags['seed_count'])
-    seed_files = sorted(globmod.glob(path + 'seed_*.npz'))
+    seed_files = sorted(glob.glob(path + 'seed_*.npz'))
     if len(seed_files) != seed_count:
         raise click.UsageError(
             f"Cannot collate: expected {seed_count} seed_*.npz files in {path}, found {len(seed_files)}."
@@ -693,12 +714,8 @@ def collate(
 
     longtail_percentile = float(flags.get('longtail_percentile', 80.0)) # Just in case read from JSON as integer
 
-    labels = (
-        ["Greedy", "Random"]
-        + [f"ε-greedy (ε={e})" for e in flags['epsilon']]
-        + [f"LinUCB (α={a})" for a in flags['alpha']]
-        + [f"TS (ʋ={v})" for v in flags['ts_v']]
-    )
+    # Build the policy labels
+    labels = dlb_sim.build_policy_labels(flags['epsilon'], flags['alpha'], flags['ts_v'])
 
     # Collect simulation arrays
     all_rewards         = []
@@ -723,36 +740,45 @@ def collate(
     mean_rewards = all_rewards.mean(axis=0)
     mean_regrets = all_regrets.mean(axis=0)
     total_seeds = all_rewards.shape[0]
-    dlb_sim.Simulator._visualise_rewards(total_seeds, labels, mean_rewards, path)
-    dlb_sim.Simulator._visualise_regrets(total_seeds, labels, mean_regrets, path)
 
-    # Compute all metrics (reward/regret curves + diversity metrics) across seeds
-    computed = dlb_sim.compute_all_metrics(
+    metric_interval = int(flags.get('metric_interval', 500))
+
+    # Compute all metrics (reward/regret curves + diversity over time) across seeds
+    metrics, raw_arrays = dlb_sim.compute_all_metrics(
         all_rewards,
         all_regrets,
         all_recommendations,
         item_popularity,
-        longtail_percentile
+        longtail_percentile,
+        metric_interval
     )
 
-    # Save metrics (human-readable)
-    metrics_out = {
-        'labels': labels,
-        'seed': flags['seed'],
-        'seed_count': total_seeds,
-        'longtail_percentile': longtail_percentile,
-        **computed
-    }
-    with open(path + 'metrics.json', 'w') as f:
-        json.dump(metrics_out, f, indent=4)
+    # Generate all plots
+    dlb_plot.plot_rewards(total_seeds, labels, mean_rewards, path)
+    dlb_plot.plot_regrets(total_seeds, labels, mean_regrets, path)
+    dlb_plot.plot_ba_metrics_over_time(
+        raw_arrays['metric_rounds'],
+        raw_arrays['all_gini'],
+        raw_arrays['all_coverage'],
+        raw_arrays['all_arp'],
+        labels,
+        path,
+        longtail_percentile,
+    )
+    print(f"Plots saved to {path}")
 
-    # Save combined raw arrays
+    with open(path + 'metrics.json', 'w') as f:
+        json.dump({'labels': labels, 'seed': flags['seed'], 'seed_count': total_seeds,
+                   'longtail_percentile': longtail_percentile, **metrics}, f, indent=4)
+
+    # Save combined raw arrays including per-seed diversity time-series
     np.savez(
         path + 'raw_results.npz',
         all_rewards=all_rewards,
         all_regrets=all_regrets,
         all_recommendations=all_recommendations,
-        item_popularity=item_popularity
+        item_popularity=item_popularity,
+        **raw_arrays,
     )
 
     # Combined arrays are persisted; clean up per-seed intermediate files
@@ -762,3 +788,56 @@ def collate(
     print(f"\nCollation complete: {total_seeds} seeds merged.")
     print(f"Removed {len(seed_files)} per-seed files from {path}")
     print(f"Results saved to {path}")
+
+@cli.command('plot')
+@click.option(
+    '--save-name',
+    type=str,
+    required=True,
+    help='Directory name under simulations/ containing raw_results.npz to plot from.'
+)
+@click.option(
+    '--metric-interval',
+    type=click.IntRange(1),
+    default=None,
+    help='Override the round interval for beyond-accuracy metrics. If omitted, uses the value from flags.json (or 500).'
+)
+def plot(
+    save_name: str,
+    metric_interval: int | None,
+) -> None:
+    """
+    Regenerate all plots from saved simulation results without re-running the simulation.
+
+    Reads raw_results.npz and flags.json from the given directory. If the npz contains
+    pre-computed beyond-accuracy metric arrays they are used directly; otherwise they are
+    recomputed from the stored recommendation sequences.
+    """
+
+    # Check for simulation path
+    path = DLB_DIR + f'simulations/{save_name}/'
+    if not os.path.isdir(path):
+        raise click.ClickException(f"Directory not found: {path}")
+
+    # Check for flags & read in
+    flags_path = path + 'flags.json'
+    if not os.path.exists(flags_path):
+        raise click.ClickException(f"No flags.json found in {path}.")
+    with open(flags_path, 'r') as f:
+        flags = json.load(f)
+
+    # Check for raw results (i.e. per-seed data pre-merging) & read in
+    npz_path = path + 'raw_results.npz'
+    if not os.path.exists(npz_path):
+        raise click.ClickException(f"No raw_results.npz found in {path}. Run 'dlb simulate' or 'dlb collate' first.")
+
+    # Resolve metric_interval: CLI flag -> flags.json -> default 500
+    if metric_interval is None:
+        metric_interval = int(flags.get('metric_interval', 500))
+
+    # Regenerate plots & save them again
+    print(f"\nRegenerating plots from {npz_path} (metric_interval={metric_interval})...")
+    with np.load(npz_path) as npz:
+        raw_results = dict(npz)
+    dlb_plot.generate_all_plots(raw_results, flags, path, metric_interval)
+    print(f"Plots saved to {path}")

@@ -2,8 +2,6 @@ import numpy as np
 import torch
 from deep_linear_bandits.data import KRSmall
 from tqdm import trange
-import matplotlib.pyplot as plt
-from datetime import datetime
 
 SMALL_USERS = 1411
 SMALL_ITEMS = 3327
@@ -56,37 +54,90 @@ def average_recommendation_popularity(
     """
     return item_popularities[recommendations].mean()
 
+def compute_ba_metrics_over_time(
+    all_recommendations: np.ndarray,   # (seeds, policies, rounds)
+    item_popularities: np.ndarray,     # (n_items,)
+    interval: int = 500,
+    longtail_percentile: float = 80.0
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Compute Gini, long-tail coverage, and ARP (beyond-accuracy metrics) at regular round checkpoints.
+    Checkpoints are placed every `interval` rounds + always includes the final round.
+
+    Returns:
+        metric_rounds: (n_checkpoints,) [the round numbers evaluated]
+        all_gini:      (seeds, policies, n_checkpoints)
+        all_coverage:  (seeds, policies, n_checkpoints)
+        all_arp:       (seeds, policies, n_checkpoints)
+    """
+    seed_count, n_policies, rounds = all_recommendations.shape
+
+    # Checkpoints every `interval` + final round always included
+    checkpoints = list(range(interval, rounds + 1, interval))
+    if not checkpoints or checkpoints[-1] != rounds:
+        checkpoints.append(rounds)
+    metric_rounds = np.array(checkpoints, dtype=np.int32)
+    n_checkpoints = len(checkpoints)
+
+    # Set up collecting the beyond-accuracy metrics
+    all_gini     = np.empty((seed_count, n_policies, n_checkpoints))
+    all_coverage = np.empty((seed_count, n_policies, n_checkpoints))
+    all_arp      = np.empty((seed_count, n_policies, n_checkpoints))
+
+    # Precompute longtail coverage static parts (threshold and item set are independent of recommendations)
+    longtail_threshold = np.percentile(item_popularities, longtail_percentile)
+    longtail_items = np.where(item_popularities < longtail_threshold)[0]
+    n_longtail = len(longtail_items)
+
+    # For each checkpoint t, slice recommendations up to round t and compute all three metrics per seed and policy
+    for ci, t in enumerate(checkpoints):
+        for s in range(seed_count):
+            for p in range(n_policies):
+                recs = all_recommendations[s, p, :t]
+
+                all_gini[s, p, ci] = gini_coefficient(recs)
+
+                if n_longtail > 0:
+                    covered = np.isin(longtail_items, np.unique(recs)).sum()
+                    all_coverage[s, p, ci] = covered / n_longtail
+                else:
+                    all_coverage[s, p, ci] = 0.0
+
+                all_arp[s, p, ci] = average_recommendation_popularity(recs, item_popularities)
+
+    return metric_rounds, all_gini, all_coverage, all_arp
 
 def compute_all_metrics(
     all_rewards: np.ndarray,           # (seeds, policies, rounds)
     all_regrets: np.ndarray,           # (seeds, policies, rounds)
     all_recommendations: np.ndarray,   # (seeds, policies, rounds)
     item_popularities: np.ndarray,     # (n_items,)
-    longtail_percentile: float = 80.0
-) -> dict:
+    longtail_percentile: float = 80.0,
+    metric_interval: int = 500
+) -> tuple[dict, dict]:
     """
     Aggregates all metrics (rewards, regrets, diversity) across seeds.
 
-    Returns a dict with mean/std for cumulative rewards/regrets (full curves + final values) and mean/std
-    for Gini, long-tail coverage, and ARP per policy.
+    Returns:
+        metrics:    dict of mean/std values for all metrics (JSON-serialisable)
+        raw_arrays: dict of raw per-seed numpy arrays for npz storage
+            -> contains {metric_rounds, all_gini, all_coverage, all_arp}
     """
-    seed_count, n_policies, _ = all_rewards.shape
-
     all_cum_rewards = np.cumsum(all_rewards, axis=2)
     all_cum_regrets = np.cumsum(all_regrets, axis=2)
 
-    # Per-seed-per-policy diversity metrics
-    all_gini = np.empty((seed_count, n_policies))
-    all_coverage = np.empty((seed_count, n_policies))
-    all_arp = np.empty((seed_count, n_policies))
-    for s in range(seed_count):
-        for p in range(n_policies):
-            recs = all_recommendations[s, p]
-            all_gini[s, p] = gini_coefficient(recs)
-            all_coverage[s, p] = longtail_coverage(recs, item_popularities, longtail_percentile)
-            all_arp[s, p] = average_recommendation_popularity(recs, item_popularities)
+    metric_rounds, all_gini, all_coverage, all_arp = compute_ba_metrics_over_time(
+        all_recommendations, item_popularities, metric_interval, longtail_percentile
+    )
 
-    return {
+    # Final stats too; can use these for just plotting bar charts with the final policies instead of a curve
+    final_gini     = all_gini[:, :, -1]
+    final_coverage = all_coverage[:, :, -1]
+    final_arp      = all_arp[:, :, -1]
+
+    # Convert to lists so that I can read the JSON easily for these after it comes back from the Batch Compute Systems
+    # Now includes not just the last-state values but also the ones plotted over time at each checkpoint
+    metrics = {
         "mean_cumulative_rewards":        all_cum_rewards.mean(axis=0).tolist(),
         "std_cumulative_rewards":         all_cum_rewards.std(axis=0).tolist(),
 
@@ -99,15 +150,49 @@ def compute_all_metrics(
         "mean_final_cumulative_regrets":  all_cum_regrets.mean(axis=0)[:, -1].tolist(),
         "std_final_cumulative_regrets":   all_cum_regrets.std(axis=0)[:, -1].tolist(),
 
-        "mean_gini":                      all_gini.mean(axis=0).tolist(),
-        "std_gini":                       all_gini.std(axis=0).tolist(),
+        "mean_gini":                      final_gini.mean(axis=0).tolist(),
+        "std_gini":                       final_gini.std(axis=0).tolist(),
 
-        "mean_longtail_coverage":         all_coverage.mean(axis=0).tolist(),
-        "std_longtail_coverage":          all_coverage.std(axis=0).tolist(),
+        "mean_longtail_coverage":         final_coverage.mean(axis=0).tolist(),
+        "std_longtail_coverage":          final_coverage.std(axis=0).tolist(),
 
-        "mean_arp":                       all_arp.mean(axis=0).tolist(),
-        "std_arp":                        all_arp.std(axis=0).tolist(),
+        "mean_arp":                       final_arp.mean(axis=0).tolist(),
+        "std_arp":                        final_arp.std(axis=0).tolist(),
+
+        "metric_rounds":                  metric_rounds.tolist(),
+
+        "mean_gini_over_time":            all_gini.mean(axis=0).tolist(),
+        "std_gini_over_time":             all_gini.std(axis=0).tolist(),
+
+        "mean_coverage_over_time":        all_coverage.mean(axis=0).tolist(),
+        "std_coverage_over_time":         all_coverage.std(axis=0).tolist(),
+
+        "mean_arp_over_time":             all_arp.mean(axis=0).tolist(),
+        "std_arp_over_time":              all_arp.std(axis=0).tolist(),
     }
+
+    # Raw arrays for saving as npz for loading again in case visualisation logic changes
+    raw_arrays = {
+        "metric_rounds": metric_rounds,
+        "all_gini":      all_gini,
+        "all_coverage":  all_coverage,
+        "all_arp":       all_arp,
+    }
+
+    return metrics, raw_arrays
+
+# Quick helper since code was getting cluttered
+def build_policy_labels(
+    e_greedy_epsilons: list[float],
+    linucb_alphas: list[float],
+    ts_vs: list[float]
+) -> list[str]:
+    return (
+        ["Greedy", "Random"]
+        + [f"ε-greedy (ε={e})" for e in e_greedy_epsilons]
+        + [f"LinUCB (α={a})"   for a in linucb_alphas]
+        + [f"TS (ʋ={v})"       for v in ts_vs]
+    )
 
 def build_two_tower_contexts(
         user_embeddings: torch.Tensor,  # (U, D)
@@ -424,118 +509,6 @@ class Simulator:
         dot_products = user_embeddings @ item_embeddings.T
         self.greedy_items = torch.sort(dot_products, dim=1, descending=True).indices.cpu().numpy()
 
-    @staticmethod
-    def _visualise_rewards(
-            seed_count: int,
-            labels: list[str],
-            mean_rewards: np.ndarray[float],
-            output_dir: str
-    ):
-        # Get cumulative rewards (from the means)
-        cum_reward_means = np.cumsum(mean_rewards, axis=1)
-        rounds = np.arange(1, mean_rewards.shape[1] + 1)
-
-        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6), sharey=True)
-        if seed_count > 1:
-            fig.suptitle(f"Policy simulation: cumulative bandit reward (averaged over {seed_count} simulations)")
-        else:
-            fig.suptitle(f"Policy simulation: cumulative bandit reward (shared random seed)")
-
-        # Set up all three subplots with Greedy & Random baselines
-        for ax in (ax1, ax2, ax3):
-            ax.plot(rounds, cum_reward_means[0], color='#444444', label="Greedy", linestyle='--')
-            ax.plot(rounds, cum_reward_means[1], color='#aaaaaa', label="Random", linestyle='--')
-            ax.set_xlabel("Round")
-            ax.set_ylabel("Cumulative reward")
-            ax.grid(True, alpha=0.3)
-
-        # Plot ε-greedy rewards
-        j, colours = 0, ['#c6d9f7', '#7aaede', '#4878CF', '#1e3f7a']
-        for i, label in enumerate(labels):
-            if not label.startswith("ε-greedy"): continue
-            ax1.plot(rounds, cum_reward_means[i], color=colours[j % len(colours)], label=label)
-            ax1.set_title("ε-greedy rewards")
-            ax1.legend()
-            j += 1
-
-        # Plot LinUCB rewards
-        j, colours = 0, ['#fddbb4', '#f5a962', '#E8612C', '#a83a10', '#5c1a04']
-        for i, label in enumerate(labels):
-            if not label.startswith("LinUCB"): continue
-            ax2.plot(rounds, cum_reward_means[i], color=colours[j % len(colours)], label=label)
-            ax2.set_title("LinUCB rewards")
-            ax2.legend()
-            j += 1
-
-        # Plot Thompson Sampling rewards
-        j, colours = 0, ['#a8d8a8', '#6AAB6A', '#3d7a3d', '#1e4f1e', '#0a2a0a']
-        for i, label in enumerate(labels):
-            if not label.startswith("TS"): continue
-            ax3.plot(rounds, cum_reward_means[i], color=colours[j % len(colours)], label=label)
-            ax3.set_title("Thompson Sampling rewards")
-            ax3.legend()
-            j += 1
-
-        plt.tight_layout()
-        plt.savefig(output_dir + 'rewards.png')
-        plt.close()
-
-    @staticmethod
-    def _visualise_regrets(
-            seed_count: int,
-            labels: list[str],
-            mean_regrets: np.ndarray,
-            output_dir: str
-    ):
-        # Get cumulative regrets (from the means)
-        cum_regret_means = np.cumsum(mean_regrets, axis=1)
-        rounds = np.arange(1, mean_regrets.shape[1] + 1)
-
-        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6), sharey=True)
-        if seed_count > 1:
-            fig.suptitle(f"Policy simulation: cumulative bandit regret (averaged over {seed_count} simulations)")
-        else:
-            fig.suptitle(f"Policy simulation: cumulative bandit regret (shared random seed)")
-
-        # Set up all three subplots with Random & Greedy baselines
-        for ax in (ax1, ax2, ax3):
-            ax.plot(rounds, cum_regret_means[1], color='#aaaaaa', label="Random", linestyle='--')
-            ax.plot(rounds, cum_regret_means[0], color='#444444', label="Greedy", linestyle='--')
-            ax.set_xlabel("Round")
-            ax.set_ylabel("Cumulative regret")
-            ax.grid(True, alpha=0.3)
-
-        # Plot ε-greedy regrets
-        j, colours = 0, ['#c6d9f7', '#7aaede', '#4878CF', '#1e3f7a']
-        for i, label in enumerate(labels):
-            if not label.startswith("ε-greedy"): continue
-            ax1.plot(rounds, cum_regret_means[i], color=colours[j % len(colours)], label=label)
-            ax1.set_title("ε-greedy regret")
-            ax1.legend()
-            j += 1
-
-        # Plot LinUCB regrets
-        j, colours = 0, ['#fddbb4', '#f5a962', '#E8612C', '#a83a10', '#5c1a04']
-        for i, label in enumerate(labels):
-            if not label.startswith("LinUCB"): continue
-            ax2.plot(rounds, cum_regret_means[i], color=colours[j % len(colours)], label=label)
-            ax2.set_title("LinUCB regret")
-            ax2.legend()
-            j += 1
-
-        # Plot Thompson Sampling regrets
-        j, colours = 0, ['#a8d8a8', '#6AAB6A', '#3d7a3d', '#1e4f1e', '#0a2a0a']
-        for i, label in enumerate(labels):
-            if not label.startswith("TS"): continue
-            ax3.plot(rounds, cum_regret_means[i], color=colours[j % len(colours)], label=label)
-            ax3.set_title("Thompson Sampling regret")
-            ax3.legend()
-            j += 1
-
-        plt.tight_layout()
-        plt.savefig(output_dir + 'regrets.png')
-        plt.close()
-
     def _run_one_seed(
             self,
             simulation_num: int,
@@ -621,13 +594,7 @@ class Simulator:
         child_seeds = rng.integers(0, 2**32, size=seed_count).tolist()
         streams = rng.integers(low=0, high=SMALL_USERS, size=(seed_count, rounds))
 
-        # Policy labels
-        labels = (
-            ["Greedy", "Random"]
-            + [f"ε-greedy (ε={e})" for e in e_greedy_epsilons]
-            + [f"LinUCB (α={a})" for a in linucb_alphas]
-            + [f"TS (ʋ={v})" for v in ts_vs]
-        )
+        labels = build_policy_labels(e_greedy_epsilons, linucb_alphas, ts_vs)
 
         # Dispatched over multiple Slurm jobs - this is just one of them
         if seed_index is not None:
