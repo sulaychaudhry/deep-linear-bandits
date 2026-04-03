@@ -138,6 +138,9 @@ def compute_all_metrics(
     # Convert to lists so that I can read the JSON easily for these after it comes back from the Batch Compute Systems
     # Now includes not just the last-state values but also the ones plotted over time at each checkpoint
     metrics = {
+        "mean_rewards":                   all_rewards.mean(axis=0).tolist(),
+        "mean_regrets":                   all_regrets.mean(axis=0).tolist(),
+
         "mean_cumulative_rewards":        all_cum_rewards.mean(axis=0).tolist(),
         "std_cumulative_rewards":         all_cum_rewards.std(axis=0).tolist(),
 

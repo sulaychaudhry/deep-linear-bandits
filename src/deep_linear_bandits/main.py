@@ -633,9 +633,6 @@ def simulate(
 
     # Not split into multiple Slurm jobs; either one seed only or multiple seeds within this single program instance
     else:
-        rewards = results['mean_rewards']
-        regrets = results['mean_regrets']
-
         # Compute all metrics (reward/regret curves + diversity metrics) across seeds
         metrics, raw_arrays = dlb_sim.compute_all_metrics(
             results["all_rewards"],
@@ -646,31 +643,23 @@ def simulate(
             metric_interval
         )
 
+        # Add data necessary for plotting & general reproducibility
+        metrics_for_plot = {
+            'labels':              labels,
+            'seed':                seed,
+            'seed_count':          seed_count,
+            'longtail_percentile': longtail_percentile,
+            **metrics,
+        }
+
         # Generate all plots, using `plot.py` now instead for separation of concerns
         # Note that this means that I can use the BCS to retrieve metrics and alter plots etc still
         # Plus just makes the CLI easier to use
-        dlb_plot.plot_rewards(seed_count, labels, rewards, path)
-        dlb_plot.plot_regrets(seed_count, labels, regrets, path)
-        dlb_plot.plot_ba_metrics_over_time(
-            raw_arrays['metric_rounds'],
-            raw_arrays['all_gini'],
-            raw_arrays['all_coverage'],
-            raw_arrays['all_arp'],
-            labels,
-            path,
-            longtail_percentile,
-        )
+        dlb_plot.generate_all_plots(metrics_for_plot, flags, path)
         print(f"Plots saved to {path}")
 
-        # Save human-readable metrics (without raw data i.e. individual seed data, so it's all merged)
         with open(path + 'metrics.json', 'w') as f:
-            json.dump({
-                'labels':              labels,
-                'seed':                seed,
-                'seed_count':          seed_count,
-                'longtail_percentile': longtail_percentile, 
-                **metrics
-            }, f, indent=4)
+            json.dump(metrics_for_plot, f, indent=4)
 
         # For efficient access of all raw data just in case needed again (if BCS busy etc)
         np.savez(
@@ -744,9 +733,6 @@ def collate(
     all_regrets = np.stack(all_regrets, axis=0)
     all_recommendations = np.stack(all_recommendations, axis=0)
 
-    # Compute means ready for plotting
-    mean_rewards = all_rewards.mean(axis=0)
-    mean_regrets = all_regrets.mean(axis=0)
     total_seeds = all_rewards.shape[0]
 
     metric_interval = int(flags.get('metric_interval', 500))
@@ -761,23 +747,20 @@ def collate(
         metric_interval
     )
 
-    # Generate all plots
-    dlb_plot.plot_rewards(total_seeds, labels, mean_rewards, path)
-    dlb_plot.plot_regrets(total_seeds, labels, mean_regrets, path)
-    dlb_plot.plot_ba_metrics_over_time(
-        raw_arrays['metric_rounds'],
-        raw_arrays['all_gini'],
-        raw_arrays['all_coverage'],
-        raw_arrays['all_arp'],
-        labels,
-        path,
-        longtail_percentile,
-    )
+    # Add data for plotting & reproducibility
+    metrics_for_plot = {
+        'labels':              labels,
+        'seed':                flags['seed'],
+        'seed_count':          total_seeds,
+        'longtail_percentile': longtail_percentile,
+        **metrics,
+    }
+
+    dlb_plot.generate_all_plots(metrics_for_plot, flags, path)
     print(f"Plots saved to {path}")
 
     with open(path + 'metrics.json', 'w') as f:
-        json.dump({'labels': labels, 'seed': flags['seed'], 'seed_count': total_seeds,
-                   'longtail_percentile': longtail_percentile, **metrics}, f, indent=4)
+        json.dump(metrics_for_plot, f, indent=4)
 
     # Save combined raw arrays including per-seed diversity time-series
     np.savez(
@@ -802,7 +785,7 @@ def collate(
     '--save-name',
     type=str,
     required=True,
-    help='Directory name under simulations/ containing raw_results.npz to plot from.'
+    help='Directory name under simulations/ containing metrics.json to plot from.'
 )
 @click.option(
     '--metric-interval',
@@ -817,9 +800,9 @@ def plot(
     """
     Regenerate all plots from saved simulation results without re-running the simulation.
 
-    Reads raw_results.npz and flags.json from the given directory. If the npz contains
-    pre-computed beyond-accuracy metric arrays they are used directly; otherwise they are
-    recomputed from the stored recommendation sequences.
+    Reads metrics.json and flags.json from the given directory by default.
+    Only loads raw_results.npz when --metric-interval is overridden (to recompute beyond-accuracy metrics at a different interval).
+    Updates metrics.json to match the metric_interval seen in the new plots.
     """
 
     # Check for simulation path
@@ -834,18 +817,62 @@ def plot(
     with open(flags_path, 'r') as f:
         flags = json.load(f)
 
-    # Check for raw results (i.e. per-seed data pre-merging) & read in
-    npz_path = path + 'raw_results.npz'
-    if not os.path.exists(npz_path):
-        raise click.ClickException(f"No raw_results.npz found in {path}. Run 'dlb simulate' or 'dlb collate' first.")
+    # Check for metrics & read in
+    metrics_path = path + 'metrics.json'
+    if not os.path.exists(metrics_path):
+        raise click.ClickException(f"No metrics.json found in {path}. Run 'dlb simulate' or 'dlb collate' first.")
+    with open(metrics_path, 'r') as f:
+        metrics = json.load(f)
 
-    # Resolve metric_interval: CLI flag -> flags.json -> default 500
+    # Load beyond-accuracy metric interval from simulation flags if not supplied (fallback of 500)
+    stored_interval = int(flags.get('metric_interval', 500))
     if metric_interval is None:
-        metric_interval = int(flags.get('metric_interval', 500))
+        metric_interval = stored_interval
 
-    # Regenerate plots & save them again
-    print(f"\nRegenerating plots from {npz_path} (metric_interval={metric_interval})...")
-    with np.load(npz_path) as npz:
-        raw_results = dict(npz)
-    dlb_plot.generate_all_plots(raw_results, flags, path, metric_interval)
-    print(f"Plots saved to {path}")
+    # If the interval is overridden, recompute beyond-accuracy metrics from raw recommendations and update the metrics dict
+    if metric_interval != stored_interval:
+        # Look for the raw results and load them
+        npz_path = path + 'raw_results.npz'
+        if not os.path.exists(npz_path):
+            raise click.ClickException(
+                f"--metric-interval override requires raw_results.npz but none found in {path}."
+            )
+        
+        # Get long-tail percentile for recomputing long-tail coverage
+        longtail_percentile = float(flags.get('longtail_percentile', 80.0))
+
+        # Recompute beyond-accuracy metrics
+        with np.load(npz_path) as npz:
+            metric_rounds, all_gini, all_coverage, all_arp = dlb_sim.compute_ba_metrics_over_time(
+                npz['all_recommendations'], 
+                npz['item_popularity'], 
+                metric_interval, 
+                longtail_percentile
+            )
+
+        # Update metrics dictionary
+        final_gini     = all_gini[:, :, -1]
+        final_coverage = all_coverage[:, :, -1]
+        final_arp      = all_arp[:, :, -1]
+        metrics.update({
+            'metric_rounds':           metric_rounds.tolist(),
+            'mean_gini_over_time':     all_gini.mean(axis=0).tolist(),
+            'std_gini_over_time':      all_gini.std(axis=0).tolist(),
+            'mean_coverage_over_time': all_coverage.mean(axis=0).tolist(),
+            'std_coverage_over_time':  all_coverage.std(axis=0).tolist(),
+            'mean_arp_over_time':      all_arp.mean(axis=0).tolist(),
+            'std_arp_over_time':       all_arp.std(axis=0).tolist(),
+            'mean_gini':               final_gini.mean(axis=0).tolist(),
+            'std_gini':                final_gini.std(axis=0).tolist(),
+            'mean_longtail_coverage':  final_coverage.mean(axis=0).tolist(),
+            'std_longtail_coverage':   final_coverage.std(axis=0).tolist(),
+            'mean_arp':                final_arp.mean(axis=0).tolist(),
+            'std_arp':                 final_arp.std(axis=0).tolist(),
+        })
+
+    print(f"\nRegenerating plots from {metrics_path} (metric_interval={metric_interval})...")
+    dlb_plot.generate_all_plots(metrics, flags, path)
+
+    with open(metrics_path, 'w') as f:
+        json.dump(metrics, f, indent=4)
+    print(f"Plots and (updated) metrics saved to {path}")
