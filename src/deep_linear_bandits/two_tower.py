@@ -524,7 +524,6 @@ def train_two_tower(
         - the best state of the passed model (by Recall@k for k=best_k)
 
     Score-weighted negative sampling:
-        - At the start of each epoch all item embeddings are cached
         - For each batch, each user gets K negatives with probability proportional to
           softmax(scores * score_sharpness) with their positives masked out
         - As such score_sharpness=0 gives uniform sampling / higher score_sharpness is more concentrated
