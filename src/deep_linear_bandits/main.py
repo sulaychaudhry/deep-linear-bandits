@@ -160,6 +160,13 @@ def cli() -> None:
     help='Sharpness of score-weighted negative sampling. 0 = uniform; higher values increasingly concentrate random sampling on items the model currently scores highly for each user. Only used with --negative-sampling score-weighted.'
 )
 @click.option(
+    '--val-negatives',
+    type=click.IntRange(min=1),
+    default=256,
+    show_default=True,
+    help='Number of per-user uniform negatives to use when computing validation loss (always uniform regardless of training strategy, for a stable comparison metric; negatives are known user-non-positives rather than just randomly sampled items).'
+)
+@click.option(
     '--lr',
     type=click.FloatRange(min=0.0, min_open=True),
     default=0.001,
@@ -234,6 +241,7 @@ def train_tt(
     num_negatives: int,
     negative_sampling: str,
     score_sharpness: float,
+    val_negatives: int,
     lr: float,
     optimiser: str,
     data_workers: int,
@@ -389,6 +397,7 @@ def train_tt(
         num_negatives=num_negatives,
         negative_sampling=negative_sampling,
         score_sharpness=score_sharpness,
+        val_negatives=val_negatives,
         optimiser=(
             torch.optim.Adam(model.parameters(), lr=lr)
             if optimiser=='adam' else

@@ -516,6 +516,7 @@ def train_two_tower(
     num_negatives: int,
     negative_sampling: str,             # 'uniform', 'in-batch', or 'score-weighted'
     score_sharpness: float,             # sharpness for score-weighted sampling: closer to 0 = uniform, higher = harder negatives
+    val_negatives: int,                 # number of per-user uniform negatives for validation loss
     optimiser: torch.optim.Optimizer    # Adam or AdamW
 ) -> tuple[dict, TwoTower]:
     """
@@ -570,9 +571,18 @@ def train_two_tower(
     train_pos_mask = torch.zeros(NUM_USERS, NUM_ITEMS, dtype=torch.bool, device=device)
     train_pos_mask[training_set.user_ids, training_set.item_ids] = True
 
+    # Combined mask for validation loss: excludes both training and validation positives so that
+    # val loss negatives are drawn purely from items with no known positive signal
+    val_pos_mask = train_pos_mask.clone()
+    val_pos_mask[validation_set.user_ids, validation_set.item_ids] = True
+
     # Train model for multiple epochs, tracking both training & validation loss
     # Additionally track Recall@K & NDCG@K as proper validation metrics
     metrics = defaultdict(list)
+    metrics["negative_sampling"] = negative_sampling
+    metrics["num_negatives"] = num_negatives
+    metrics["score_sharpness"] = score_sharpness
+    metrics["val_negatives"] = val_negatives
     for epoch in tqdm(range(1, epochs + 1), desc="Train/val epoch"):
         # Switch model into training mode
         model.train()
@@ -651,64 +661,21 @@ def train_two_tower(
         model.eval()
 
         # Check average per-batch validation loss after this epoch
+        # Always uses per-user uniform negatives (score_sharpness=0) with both training and
+        # validation positives masked out, regardless of the training sampling strategy - this
+        # keeps val loss a stable comparison across epochs and different training strategies
         val_loss = 0
         with torch.no_grad(): # Not training so don't compute gradients for backprop
             for batch in val_loader:
-                if negative_sampling == 'in-batch':
-                    # Again, the manual in-batch neg sampling logic
-
-                    # Embed users & their positives
-                    user_embs = model.user_tower(
-                        batch["user_id"].to(device),
-                        batch["user_cat_feats"].to(device),
-                        batch["user_numeric_feats"].to(device)
-                    )
-                    pos_item_embs = model.item_tower(
-                        batch["item_id"].to(device),
-                        batch["item_categories"].to(device)
-                    )
-
-                    # Calculate dot product (similarity score) between all users and all positive items
-                    logits = (user_embs @ pos_item_embs.T) / model.logit_temp
-
-                    # The target is for each user to be assigned (classified) the item on the diagonal, as that is their actual positive
-                    target = torch.arange(logits.size(0), device=device)
-                elif negative_sampling == 'score-weighted':
-                    logits, target = _score_weighted_obj(
-                        model,
-                        batch["user_id"].to(device),
-                        batch["user_cat_feats"].to(device),
-                        batch["user_numeric_feats"].to(device),
-                        batch["item_id"].to(device),
-                        item_ids_t, item_categories_gpu,
-                        train_pos_mask, num_negatives, score_sharpness, device
-                    )
-
-                else:
-                    # Again, uniformly sample negatives (positive objective is strictly from validation set though now)
-                    neg_item_ids = torch.randint(
-                        0, NUM_ITEMS, (num_negatives,), device=device
-                    )
-                    neg_item_categories = item_categories_gpu[neg_item_ids]
-
-                    # Compute similarities between user embedding & positive item embedding + uniform negatives
-                    logits = model(
-                        user_ids=batch["user_id"].to(device),
-                        pos_item_ids=batch["item_id"].to(device),
-                        neg_item_ids=neg_item_ids,
-
-                        user_cat_feats=batch["user_cat_feats"].to(device),
-                        user_numeric_feats=batch["user_numeric_feats"].to(device),
-
-                        pos_item_categories=batch["item_categories"].to(device),
-                        neg_item_categories=neg_item_categories
-                    )
-
-                    # Same target as in training: the first item is the positive one
-                    target = torch.zeros(
-                        logits.size(0), dtype=torch.long, device=device
-                    )
-
+                logits, target = _score_weighted_obj(
+                    model,
+                    batch["user_id"].to(device),
+                    batch["user_cat_feats"].to(device),
+                    batch["user_numeric_feats"].to(device),
+                    batch["item_id"].to(device),
+                    item_ids_t, item_categories_gpu,
+                    val_pos_mask, val_negatives, 0.0, device
+                )
                 val_loss += loss_fn(logits, target).item()
             val_loss /= len(val_loader) # Track per-batch average loss
 
@@ -795,9 +762,17 @@ def visualise(
 
     fig, (ax_loss, ax_recall, ax_ndcg) = plt.subplots(1, 3, figsize=(24, 10)) # Set up superplot
 
+    match metrics["negative_sampling"]:
+        case 'in-batch':
+            train_label = 'Training Loss (in-batch negatives)'
+        case 'uniform':
+            train_label = f'Training Loss ({metrics["num_negatives"]} global uniform negatives)'
+        case 'score-weighted':
+            train_label = f'Training Loss ({metrics["num_negatives"]} per-user score-weighted negatives, sharpness={metrics["score_sharpness"]})'
+
     # Plot training vs. validation loss
-    ax_loss.plot(epochs, metrics["train_loss"], label="Training Loss")
-    ax_loss.plot(epochs, metrics["val_loss"], label="Validation Loss")
+    ax_loss.plot(epochs, metrics["train_loss"], label=train_label)
+    ax_loss.plot(epochs, metrics["val_loss"], label=f"Validation Loss ({metrics["val_negatives"]} per-user uniform negatives)")
     ax_loss.set_xlabel("Epoch")
     ax_loss.set_ylabel("Mean per-Batch Cross-Entropy Loss")
     ax_loss.set_title("Training & Validation Loss per Epoch")
