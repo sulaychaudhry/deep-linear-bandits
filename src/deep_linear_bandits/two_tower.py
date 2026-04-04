@@ -474,8 +474,14 @@ def _score_weighted_obj(
     # Sample negative item IDs weighted by their (score_sharpness-scaled) scores, masking out positives
     with torch.no_grad():
         scores = user_embs @ all_item_embs.T                                        # (B, NUM_ITEMS)
-        scores[train_pos_mask[user_ids]] = -torch.inf
-        weights = torch.softmax(scores * score_sharpness, dim=-1)                   # (B, NUM_ITEMS)
+        
+        # Note scaling has to happen before mask, otherwise -torch.inf * 0 = NaN
+        # This puts NaN in the softmax and then torch.multinomial isn't happy
+        scaled = scores * score_sharpness
+        scaled[train_pos_mask[user_ids]] = -torch.inf
+
+        # Sample relative to the softmax-created probability distribution
+        weights = torch.softmax(scaled, dim=-1)                   # (B, NUM_ITEMS)
         neg_indices = torch.multinomial(weights, num_negatives, replacement=False)  # (B, K)
 
     # Properly get item embeddings now
@@ -509,7 +515,7 @@ def train_two_tower(
     epochs: int,
     num_negatives: int,
     negative_sampling: str,             # 'uniform', 'in-batch', or 'score-weighted'
-    score_sharpness: float,             # sharpness for score-weighted sampling: 0 = uniform, higher = harder negatives
+    score_sharpness: float,             # sharpness for score-weighted sampling: closer to 0 = uniform, higher = harder negatives
     optimiser: torch.optim.Optimizer    # Adam or AdamW
 ) -> tuple[dict, TwoTower]:
     """
