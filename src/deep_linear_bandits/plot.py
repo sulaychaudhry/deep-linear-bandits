@@ -169,19 +169,16 @@ def plot_ba_metrics_over_time(metrics: dict, output_dir: str) -> None:
     """
     Plot Gini, long-tail coverage, and ARP over time from their precomputed mean/std arrays.
     """
-    labels              = metrics['labels']
-    metric_rounds       = np.array(metrics['metric_rounds'])
-    longtail_percentile = metrics['longtail_percentile']
-
+    
     for mean_key, std_key, name, fname in [
         ('mean_gini_over_time',       'std_gini_over_time',       "Gini Coefficient",                   "gini.png"),
         ('mean_coverage_over_time',   'std_coverage_over_time',   "Long-Tail Coverage",                 "coverage.png"),
         ('mean_arp_over_time',        'std_arp_over_time',        "Average Recommendation Popularity",  "arp.png"),
     ]:
         _plot_ba_metric_over_time(
-            name, metric_rounds,
+            name, np.array(metrics['metric_rounds']),
             np.array(metrics[mean_key]), np.array(metrics[std_key]),
-            labels, output_dir, fname, longtail_percentile
+            metrics['labels'], output_dir, fname, metrics['longtail_percentile']
         )
 
 def plot_regret_rolling(metrics: dict, output_dir: str, window: int = 500) -> None:
