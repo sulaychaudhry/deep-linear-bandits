@@ -143,14 +143,21 @@ def cli() -> None:
     type=click.IntRange(1),
     default=256,
     show_default=True,
-    help='The number of uniform negatives to sample per positive interaction (only used with --negative-sampling uniform).'
+    help='The number of uniform negatives to sample per positive interaction (only used with --negative-sampling uniform/score-weighted).'
 )
 @click.option(
     '--negative-sampling',
-    type=click.Choice(('uniform', 'in-batch')),
+    type=click.Choice(('uniform', 'in-batch', 'score-weighted')),
     default='uniform',
     show_default=True,
-    help='Negative sampling strategy: "uniform" samples K random items per batch; "in-batch" uses other positives in the batch as negatives.'
+    help='Negative sampling strategy: "uniform" samples K random items per batch; "in-batch" uses other positives in the batch as negatives; "score-weighted" samples each user\'s K negatives proportional to current model scores (hard negative mining).'
+)
+@click.option(
+    '--score-sharpness',
+    type=click.FloatRange(min=0.0),
+    default=1.0,
+    show_default=True,
+    help='Sharpness of score-weighted negative sampling. 0 = uniform; higher values increasingly concentrate random sampling on items the model currently scores highly for each user. Only used with --negative-sampling score-weighted.'
 )
 @click.option(
     '--lr',
@@ -226,6 +233,7 @@ def train_tt(
     epochs: int,
     num_negatives: int,
     negative_sampling: str,
+    score_sharpness: float,
     lr: float,
     optimiser: str,
     data_workers: int,
@@ -380,6 +388,7 @@ def train_tt(
         epochs=epochs,
         num_negatives=num_negatives,
         negative_sampling=negative_sampling,
+        score_sharpness=score_sharpness,
         optimiser=(
             torch.optim.Adam(model.parameters(), lr=lr)
             if optimiser=='adam' else

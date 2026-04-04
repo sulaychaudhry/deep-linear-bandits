@@ -445,6 +445,50 @@ def compute_val_metrics(
 
     return recall_results, ndcg_results
 
+def _score_weighted_obj(
+    model: TwoTower,
+    user_ids: torch.Tensor,
+    user_cat_feats: torch.Tensor,
+    user_numeric_feats: torch.Tensor,
+    pos_item_ids: torch.Tensor,
+    item_ids_t: torch.Tensor,
+    item_categories_gpu: torch.Tensor,
+    train_pos_mask: torch.Tensor,    # (NUM_USERS, NUM_ITEMS) bool - all training positives
+    num_negatives: int,
+    score_sharpness: float,
+    device: torch.device
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Compute logits and targets for a batch under score-weighted negative sampling.
+
+    Each user's K negatives are drawn proportional to softmax(scores * score_sharpness),
+    with all their known training positives masked out before sampling.
+
+    Returns:
+        logits: (B, 1+K) - positive score followed by K negative scores, temperature-scaled ready for softmax cross-entropy loss
+        target: (B,)     - zeroes, since the positive is always at index 0
+    """
+    user_embs = model.user_tower(user_ids, user_cat_feats, user_numeric_feats)   # (B, D)
+    all_item_embs = model.item_tower(item_ids_t, item_categories_gpu)            # (NUM_ITEMS, D)
+
+    # Sample negative item IDs weighted by their (score_sharpness-scaled) scores, masking out positives
+    with torch.no_grad():
+        scores = user_embs @ all_item_embs.T                                        # (B, NUM_ITEMS)
+        scores[train_pos_mask[user_ids]] = -torch.inf
+        weights = torch.softmax(scores * score_sharpness, dim=-1)                   # (B, NUM_ITEMS)
+        neg_indices = torch.multinomial(weights, num_negatives, replacement=False)  # (B, K)
+
+    # Properly get item embeddings now
+    pos_item_emb  = all_item_embs[pos_item_ids]                                  # (B, D)
+    neg_item_embs = all_item_embs[neg_indices]                                   # (B, K, D)
+
+    pos_scores = (user_embs * pos_item_emb).sum(dim=-1, keepdim=True)           # (B, 1); just dotprod between user and pos item
+    neg_scores = torch.bmm(neg_item_embs, user_embs.unsqueeze(-1)).squeeze(-1)  # (B, K, D) bmm (B, D, 1) -> (B, K, 1) -> (B, K)
+    logits = torch.cat([pos_scores, neg_scores], dim=1) / model.logit_temp      # (B, 1+K)
+    target = torch.zeros(logits.size(0), dtype=torch.long, device=device)       # Positives are all at position 0 of each of the B rows
+
+    return logits, target
+
 def train_two_tower(
     model: TwoTower,
     device: torch.device,
@@ -464,7 +508,8 @@ def train_two_tower(
 
     epochs: int,
     num_negatives: int,
-    negative_sampling: str,             # 'uniform' or 'in-batch'
+    negative_sampling: str,             # 'uniform', 'in-batch', or 'score-weighted'
+    score_sharpness: float,             # sharpness for score-weighted sampling: 0 = uniform, higher = harder negatives
     optimiser: torch.optim.Optimizer    # Adam or AdamW
 ) -> tuple[dict, TwoTower]:
     """
@@ -477,6 +522,14 @@ def train_two_tower(
             - ['recall@{k}'] for all metric_ks
             - ['ndcg@{k}'] for all metric_ks
         - the best state of the passed model (by Recall@k for k=best_k)
+
+    Score-weighted negative sampling:
+        - At the start of each epoch all item embeddings are cached
+        - For each batch, each user gets K negatives with probability proportional to
+          softmax(scores * score_sharpness) with their positives masked out
+        - As such score_sharpness=0 gives uniform sampling / higher score_sharpness is more concentrated
+          towards the top K scored items
+        - This makes the negatives 'harder' i.e. ones that the model is struggling to discriminate
     """
 
     # Track best validation Recall@(best_k) to decide when to save the model, + save the model by its weights as that's all you need to revert it
@@ -506,6 +559,11 @@ def train_two_tower(
         validation_set.user_ids,
         validation_set.item_ids
     ] = True
+
+    # (NUM_USERS, NUM_ITEMS) bool mask of all training positives - used by score-weighted sampling
+    # to exclude every known positive for a user, not just the one currently in the batch
+    train_pos_mask = torch.zeros(NUM_USERS, NUM_ITEMS, dtype=torch.bool, device=device)
+    train_pos_mask[training_set.user_ids, training_set.item_ids] = True
 
     # Train model for multiple epochs, tracking both training & validation loss
     # Additionally track Recall@K & NDCG@K as proper validation metrics
@@ -539,9 +597,19 @@ def train_two_tower(
 
                 # The positive for user i is item i (on the diagonal)
                 target = torch.arange(logits.size(0), device=device)
+            elif negative_sampling == 'score-weighted':
+                logits, target = _score_weighted_obj(
+                    model,
+                    batch["user_id"].to(device),
+                    batch["user_cat_feats"].to(device),
+                    batch["user_numeric_feats"].to(device),
+                    batch["item_id"].to(device),
+                    item_ids_t, item_categories_gpu,
+                    train_pos_mask, num_negatives, score_sharpness, device
+                )
+
             else:
-                # The batch contains positive user-item interactions sequentially, but doesn't give us negatives
-                # These are sampled uniformly; in-batch negative sampling is seen to perform poorly in comparison on KuaiRec
+                # Uniform negative sampling: sample K random items shared across the batch
                 neg_item_ids = torch.randint(
                     0, NUM_ITEMS, (num_negatives,), device=device
                 )
@@ -600,6 +668,17 @@ def train_two_tower(
 
                     # The target is for each user to be assigned (classified) the item on the diagonal, as that is their actual positive
                     target = torch.arange(logits.size(0), device=device)
+                elif negative_sampling == 'score-weighted':
+                    logits, target = _score_weighted_obj(
+                        model,
+                        batch["user_id"].to(device),
+                        batch["user_cat_feats"].to(device),
+                        batch["user_numeric_feats"].to(device),
+                        batch["item_id"].to(device),
+                        item_ids_t, item_categories_gpu,
+                        train_pos_mask, num_negatives, score_sharpness, device
+                    )
+
                 else:
                     # Again, uniformly sample negatives (positive objective is strictly from validation set though now)
                     neg_item_ids = torch.randint(
