@@ -57,6 +57,19 @@ add dropout-04   "--dropout 0.4"
 
 for i in "${!NAMES[@]}"; do
     name="${NAMES[$i]}"
+
+    # Skip if model already trained
+    if [[ -f "${DLB_DIR}/tt-models/${name}/model.pt" ]]; then
+        echo "Skipping tt-${name}: model already exists"
+        continue
+    fi
+
+    # Skip if job already queued or running
+    if squeue -u "$USER" -h -o "%j" | grep -qx "tt-${name}"; then
+        echo "Skipping tt-${name}: job already in queue"
+        continue
+    fi
+
     flags="--save-name ${name} ${COMMON} ${FLAGS[$i]}"
     echo "Submitting tt-${name}: ${flags}"
     sbatch --job-name="tt-${name}" \
