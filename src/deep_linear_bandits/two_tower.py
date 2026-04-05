@@ -631,7 +631,6 @@ def train_two_tower(
     metrics["negative_sampling"] = negative_sampling
     metrics["num_negatives"] = num_negatives
     metrics["score_sharpness"] = score_sharpness
-    metrics["val_negatives"] = val_negatives
     for epoch in tqdm(range(1, epochs + 1), desc="Train/val epoch"):
         # Switch model into training mode
         model.train()
@@ -762,7 +761,7 @@ def train_two_tower(
                 else:
                     # Uniform: K random catalogue items, same as training (no masking)
                     neg_item_ids = torch.randint(
-                        0, NUM_ITEMS, (val_negatives,), device=device
+                        0, NUM_ITEMS, (num_negatives,), device=device
                     )
                     neg_item_categories = item_categories_gpu[neg_item_ids]
                     logits = model(
