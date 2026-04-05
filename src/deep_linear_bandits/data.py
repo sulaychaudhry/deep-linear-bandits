@@ -15,24 +15,20 @@ def preprocess_krbig_interactions(
         watch_threshold: float = 2.0
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Preprocess KuaiRec-Big user-item interactions into the training &
-    validation set; only "strongly positive" interactions (of which there
-    are about 800k) are kept: those with watch_ratio >= 2.0 as suggested in
-    the KuaiRec paper (but can be modified for additional experiments).
+    Preprocess KuaiRec-Big user-item interactions into training & validation splits.
+    The split is performed on all interactions (not just positives) to preserve the
+    full watch_ratio signal for structured negative sampling (by hardness level).
 
-    The training set has size 80%, leaving a validation set of size 20%.
-    These splits are per-user to avoid bias against cold users due to
-    random data split; not temporal as KuaiRec's small matrix can only
-    be used for offline evaluation if interactions are treated
-    independently of their timestamps - future work can focus on temporal
-    factors.
+    Duplicate (user_id, video_id) pairs are resolved by keeping the max watch_ratio.
+
+    The 80-20 split is per-user to avoid bias against cold users; users with fewer
+    than 3 total interactions contribute entirely to training.
 
     Returns
-        bm_train: Pandas dataframe containing training interactions
-        bm_val: Pandas dataframe containing validation interactions
+        all_train: all training interactions, watch_ratio retained
+        all_val:   all validation interactions, watch_ratio retained
 
-    Each of these dataframes have cols
-        | user_id | video_id |
+    all_train/all_val cols:  | user_id | video_id | watch_ratio |
     """
 
     # Read in KuaiRec-Big
@@ -41,35 +37,99 @@ def preprocess_krbig_interactions(
         usecols=["user_id", "video_id", "watch_ratio"]
     )
 
-    # Filter for the "strongly positive" signal: watch_ratio >= watch_threshold
-    # Also removes duplicate user-item interactions
-    bm = (
-        bm[bm["watch_ratio"] >= watch_threshold]
-        .drop(columns=["watch_ratio"])
-        .drop_duplicates()
-    )
+    # Deduplicate (user_id, video_id) pairs keeping the max watch_ratio;
+    # a user may have watched the same video multiple times
+    bm = bm.groupby(["user_id", "video_id"])["watch_ratio"].max()
 
-    # Users with less than 3 interactions (after signal filtering)
-    # contribute purely to training; they only constitute a small
-    # portion of the dataset.
+    # Users with fewer than 5 total interactions contribute entirely to training
     user_counts = bm["user_id"].value_counts()
-    low_users = user_counts[user_counts < 3].index
+    low_users = user_counts[user_counts < 5].index
     low_mask = bm["user_id"].isin(low_users)
 
-    # Perform the 80-20 per-user train-val split, mixing in the
-    # users that did not have their interactions split into the
-    # training set
+    # 80-20 per-user stratified split on all interactions
     splittable = bm[~low_mask]
-    bm_train, bm_val = train_test_split(
+    all_train, all_val = train_test_split(
         splittable,
         train_size=0.8,
         shuffle=True,
         stratify=splittable["user_id"],
         random_state=DATA_SPLIT_SEED
     )
-    bm_train = pd.concat([bm_train, bm[low_mask]])
+    all_train = pd.concat([all_train, bm[low_mask]]).reset_index(drop=True)
+    all_val = all_val.reset_index(drop=True)
 
-    return bm_train, bm_val # dataframes
+    return all_train, all_val
+
+def build_wr_weight_matrix(
+    all_interactions: pd.DataFrame,
+    wr_band_probs: tuple[float, ...],
+    watch_threshold: float,
+    mask_user: np.ndarray = None,
+    mask_item: np.ndarray = None
+) -> torch.Tensor:
+    """
+    Builds a (NUM_USERS, NUM_ITEMS) matrix of per-user per-item sampling weights for
+    watch_ratio-based hard negative sampling. The item bands are:
+        0 -> unseen in this split
+        1 -> watch_ratio in [0.0, 0.5)
+        2 -> watch_ratio in [0.5, 1.0)
+        3 -> watch_ratio in [1.0, 1.5)
+        4 -> watch_ratio in [1.5, watch_threshold)
+    & the probabilities for picking each group are derived from wr_band_probs.
+
+    Positive items always have weight 0 so that they're never sampled.
+    Empty bands for a user also contribute 0 weight.
+
+    Parameters
+        all_interactions: DataFrame with | user_id | video_id | watch_ratio
+        wr_band_probs:    5-tuple of the probabilities for picking each band
+        watch_threshold:  watch_ratio >= watch_threshold denotes positives
+        mask_user:        user IDs of user-item pairs that need masking out
+        mask_item:        item IDs of user-item pairs that need masking out
+
+    Returns
+        weights: (NUM_USERS, NUM_ITEMS) float32 tensor of weights ready for torch.multinomial
+    """
+
+    # So:
+    # < 0.5 -> 1
+    # [0.5,1) -> 2
+    # [1,1.5) -> 3
+    # [1.5, threshold) -> 4
+    # >= threshold -> 5
+    bins = np.array([0.5, 1.0, 1.5, watch_threshold])
+    band_ids = np.digitize(all_interactions["watch_ratio"].to_numpy(), bins) + 1
+
+    uids = all_interactions["user_id"].to_numpy(dtype=np.int64)
+    vids = all_interactions["video_id"].to_numpy(dtype=np.int64)
+
+    # Add the unseen -> 0
+    band_matrix = np.full((NUM_USERS, NUM_ITEMS), 0, dtype=np.int8)
+    band_matrix[uids, vids] = band_ids.astype(np.int8)
+
+    # Mark excluded items before computing counts so they don't affect band probabilities
+    # masked -> -1
+    if mask_user and mask_item:
+        band_matrix[mask_user, mask_item] = -1
+
+    band_matrix = torch.from_numpy(band_matrix)
+    weights = torch.zeros(NUM_USERS, NUM_ITEMS, dtype=torch.float32)
+    
+    for band, prob in enumerate(wr_band_probs):
+        if prob == 0.0:
+            continue
+
+        mask = (band_matrix == band)
+        counts = mask.sum(dim=1) # for each user check how many items in this band
+        rows, cols = mask.nonzero(as_tuple=True)
+
+        if rows.numel() == 0:
+            continue
+
+        # Distribute probability across all members of band
+        weights[rows, cols] = prob / counts[rows].float()
+
+    return weights
 
 def compute_item_popularity(
     data_dir: str,

@@ -147,10 +147,18 @@ def cli() -> None:
 )
 @click.option(
     '--negative-sampling',
-    type=click.Choice(('uniform', 'in-batch', 'score-weighted')),
+    type=click.Choice(('uniform', 'in-batch', 'score-weighted', 'watch-ratio')),
     default='uniform',
     show_default=True,
-    help='Negative sampling strategy: "uniform" samples K random items per batch; "in-batch" uses other positives in the batch as negatives; "score-weighted" samples each user\'s K negatives proportional to current model scores (hard negative mining).'
+    help='Negative sampling strategy: "uniform" samples K random items per batch; "in-batch" uses other positives in the batch as negatives; "score-weighted" samples each user\'s K negatives proportional to current model scores (hard negative mining relative to model current embedding space); "watch-ratio" uses the user\'s watch ratio for a video to place it into a negative hardness band, with different bands having different sampling probabilities (hard negative mining relative to how little the user watched the video).'
+)
+@click.option(
+    '--wr-band-probs',
+    multiple=True,
+    nargs=5,
+    type=click.FloatRange(min=0.0, max=1.0),
+    default=(0.0, 0.25, 0.25, 0.25, 0.25),
+    help='watch_ratio band sampling probabilities for `--negative-sampling watch-ratio`: (UNSEEN, [0.0, 0.5), [0.5, 1.0), [1.0, 1.5), [1.5, 2.0)); must sum to 1.'
 )
 @click.option(
     '--score-sharpness',
@@ -158,13 +166,6 @@ def cli() -> None:
     default=1.0,
     show_default=True,
     help='Sharpness of score-weighted negative sampling. 0 = uniform; higher values increasingly concentrate random sampling on items the model currently scores highly for each user. Only used with --negative-sampling score-weighted.'
-)
-@click.option(
-    '--val-negatives',
-    type=click.IntRange(min=1),
-    default=256,
-    show_default=True,
-    help='Number of per-user uniform negatives to use when computing validation loss (always uniform regardless of training strategy, for a stable comparison metric; negatives are known user-non-positives rather than just randomly sampled items).'
 )
 @click.option(
     '--lr',
@@ -240,8 +241,8 @@ def train_tt(
     epochs: int,
     num_negatives: int,
     negative_sampling: str,
+    wr_band_probs: tuple[float, ...],
     score_sharpness: float,
-    val_negatives: int,
     lr: float,
     optimiser: str,
     data_workers: int,
@@ -260,6 +261,9 @@ def train_tt(
         raise click.BadParameter(f"Flag best-k={str(best_k)} must be one of the available metric-k={str(metric_k)}", param_hint='--best-k')
     if skip_towers and side_features:
         raise click.BadOptionUsage("Debug (experimental) flag --skip-towers is enabled but without --no-side-features; user and item embedding widths are mismatched and will not be suitable for computing dot-product similarities.")
+    
+    if sum(wr_band_probs) != 1.0:
+        raise click.BadParameter(f"Flag wr-band-probs={str(wr_band_probs)} probabilities must sum to 1.0.", param_hint='--wr-band-probs')
 
     # Set up the directory for saving this model & its metrics
     path = DLB_DIR + f'tt-models/{save_name}/'
@@ -274,8 +278,10 @@ def train_tt(
     for flag_name, flag_arg in flags.items():
         print(f"    {flag_name}: {str(flag_arg)}")
 
-    # Get training & validation (positive) user-item interactions from KuaiRec-Big
-    pos_intrs_train, pos_intrs_val = dlb_data.preprocess_krbig_interactions(DATA_DIR, watch_threshold)
+    # Get training & validation interactions from KuaiRec-Big
+    pos_intrs_train, pos_intrs_val, all_intrs_train, all_intrs_val = dlb_data.preprocess_krbig_interactions(DATA_DIR, watch_threshold)
+    pos_intrs_train = all_intrs_train[all_intrs_train["watch_ratio"] >= watch_threshold].drop(columns=["watch_ratio"])
+    pos_intrs_val = all_intrs_val[all_intrs_val["watch_ratio"] >= watch_threshold].drop(columns=["watch_ratio"])
 
     # Get user side features: The categorical and numeric user features, alongside the size of each categorical user feature
     (user_cat_feats, user_cat_sizes), user_numeric_feats = dlb_data.preprocess_user_features(DATA_DIR)
@@ -288,6 +294,21 @@ def train_tt(
     
     # Get item side features: the item categories
     item_categories = dlb_data.preprocess_item_categories(DATA_DIR)
+
+    # Build per-user per-item sampling weight matrices for watch-ratio negative sampling;
+    # val weights mask out training positives to avoid validation loss falsely ballooning
+    # from training positives
+    if negative_sampling == 'watch-ratio':
+        train_wr_weights = dlb_data.build_wr_weight_matrix(
+            all_intrs_train, wr_band_probs, watch_threshold
+        ).to(device)
+        val_wr_weights = dlb_data.build_wr_weight_matrix(
+            all_intrs_val, wr_band_probs, watch_threshold,
+            mask_user=pos_intrs_train["user_id"].to_numpy(),
+            mask_item=pos_intrs_train["video_id"].to_numpy()
+        ).to(device)
+    else:
+        train_wr_weights = val_wr_weights = None
 
     # Set up arguments to pass to the TwoTower constructor; these are saved in a dictionary to ensure that the model can be reloaded after it's saved
     model_args = {
@@ -397,7 +418,8 @@ def train_tt(
         num_negatives=num_negatives,
         negative_sampling=negative_sampling,
         score_sharpness=score_sharpness,
-        val_negatives=val_negatives,
+        train_wr_weights=train_wr_weights,
+        val_wr_weights=val_wr_weights,
         optimiser=(
             torch.optim.Adam(model.parameters(), lr=lr)
             if optimiser=='adam' else

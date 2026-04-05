@@ -495,6 +495,47 @@ def _score_weighted_obj(
 
     return logits, target
 
+def _watch_ratio_weighted_obj(
+    model: TwoTower,
+    user_ids: torch.Tensor,
+    user_cat_feats: torch.Tensor,
+    user_numeric_feats: torch.Tensor,
+    pos_item_ids: torch.Tensor,
+    item_ids_t: torch.Tensor,
+    item_categories_gpu: torch.Tensor,
+    wr_weight_matrix: torch.Tensor,    # (NUM_USERS, NUM_ITEMS) precomputed per-user sampling weights
+    num_negatives: int,
+    device: torch.device
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Compute logits and targets for a batch under watch-ratio-tiered hard negative sampling.
+
+    Negatives are sampled per-user from wr_weight_matrix, which is set up to properly sample
+    from each band with the probabilities specified in the CLI.
+
+    Returns
+        logits: (B, 1+K)    positive score followed by K negative scores, temperature-scaled ready for softmax cross-entropy loss
+        target: (B,)        zeroes, since positive is always at index 0
+    """
+    user_embs = model.user_tower(user_ids, user_cat_feats, user_numeric_feats)   # (B, D)
+    all_item_embs = model.item_tower(item_ids_t, item_categories_gpu)            # (NUM_ITEMS, D)
+
+    # Look up precomputed per-user weights and sample K negatives per user
+    with torch.no_grad():
+        weights = wr_weight_matrix[user_ids]                                        # (B, NUM_ITEMS)
+        neg_indices = torch.multinomial(weights, num_negatives, replacement=False)  # (B, K)
+
+    pos_item_emb  = all_item_embs[pos_item_ids]                                  # (B, D)
+    neg_item_embs = all_item_embs[neg_indices]                                   # (B, K, D)
+
+    pos_scores = (user_embs * pos_item_emb).sum(dim=-1, keepdim=True)           # (B, 1); just dotprod between user and pos item
+    neg_scores = torch.bmm(neg_item_embs, user_embs.unsqueeze(-1)).squeeze(-1)  # (B, K, D) bmm (B, D, 1) -> (B, K, 1) -> (B, K)
+    logits = torch.cat([pos_scores, neg_scores], dim=1) / model.logit_temp      # (B, 1+K)
+    
+    target = torch.zeros(logits.size(0), dtype=torch.long, device=device) # Positives at pos 0 for all users
+
+    return logits, target
+
 def train_two_tower(
     model: TwoTower,
     device: torch.device,
@@ -514,9 +555,10 @@ def train_two_tower(
 
     epochs: int,
     num_negatives: int,
-    negative_sampling: str,             # 'uniform', 'in-batch', or 'score-weighted'
+    negative_sampling: str,             # 'uniform', 'in-batch', 'score-weighted', or 'watch-ratio'
     score_sharpness: float,             # sharpness for score-weighted sampling: closer to 0 = uniform, higher = harder negatives
-    val_negatives: int,                 # number of per-user uniform negatives for validation loss
+    train_wr_weights: torch.Tensor,     # (NUM_USERS, NUM_ITEMS) precomputed band weights for training
+    val_wr_weights: torch.Tensor,       # (NUM_USERS, NUM_ITEMS) precomputed band weights for validation
     optimiser: torch.optim.Optimizer    # Adam or AdamW
 ) -> tuple[dict, TwoTower]:
     """
@@ -536,6 +578,13 @@ def train_two_tower(
         - As such score_sharpness=0 gives uniform sampling / higher score_sharpness is more concentrated
           towards the top K scored items
         - This makes the negatives 'harder' i.e. ones that the model is struggling to discriminate
+    
+    Watch-ratio negative sampling:
+        - Rather than 'hardness' being a measure of how much the model is misclassifying the sample (which it may be misclassifying samples that are noisy / weakly informative e.g. watch_ratio=1.9),
+          hardness is a concrete measure based on the actual watch_ratios from the user for the videos
+        - A watch_ratio of 0.3 is a much more significant negative in comparison to e.g. 1.9 which is nearly a positive
+        - As such we should sample those lower watch_ratio items significantly more often per user
+        - Per-user per-item sampling weights are precomputed in train_wr_weights/val_wr_weights
     """
 
     # Track best validation Recall@(best_k) to decide when to save the model, + save the model by its weights as that's all you need to revert it
@@ -620,9 +669,19 @@ def train_two_tower(
                     batch["user_numeric_feats"].to(device),
                     batch["item_id"].to(device),
                     item_ids_t, item_categories_gpu,
-                    train_pos_mask, num_negatives, score_sharpness, device
+                    train_pos_mask, num_negatives,
+                    score_sharpness, device
                 )
-
+            elif negative_sampling == 'watch-ratio':
+                logits, target = _watch_ratio_weighted_obj(
+                    model,
+                    batch["user_id"].to(device),
+                    batch["user_cat_feats"].to(device),
+                    batch["user_numeric_feats"].to(device),
+                    batch["item_id"].to(device),
+                    item_ids_t, item_categories_gpu,
+                    train_wr_weights, num_negatives, device
+                )
             else:
                 # Uniform negative sampling: sample K random items shared across the batch
                 neg_item_ids = torch.randint(
@@ -661,21 +720,61 @@ def train_two_tower(
         model.eval()
 
         # Check average per-batch validation loss after this epoch
-        # Always uses per-user uniform negatives (score_sharpness=0) with both training and
-        # validation positives masked out, regardless of the training sampling strategy - this
-        # keeps val loss a stable comparison across epochs and different training strategies
         val_loss = 0
         with torch.no_grad(): # Not training so don't compute gradients for backprop
             for batch in val_loader:
-                logits, target = _score_weighted_obj(
-                    model,
-                    batch["user_id"].to(device),
-                    batch["user_cat_feats"].to(device),
-                    batch["user_numeric_feats"].to(device),
-                    batch["item_id"].to(device),
-                    item_ids_t, item_categories_gpu,
-                    val_pos_mask, val_negatives, 0.0, device
-                )
+                if negative_sampling == 'in-batch':
+                    # In-batch: validation positives act as negatives for each other
+                    user_embs = model.user_tower(
+                        batch["user_id"].to(device),
+                        batch["user_cat_feats"].to(device),
+                        batch["user_numeric_feats"].to(device)
+                    )
+                    pos_item_embs = model.item_tower(
+                        batch["item_id"].to(device),
+                        batch["item_categories"].to(device)
+                    )
+                    logits = (user_embs @ pos_item_embs.T) / model.logit_temp
+                    target = torch.arange(logits.size(0), device=device)
+                elif negative_sampling == 'score-weighted':
+                    # Score-weighted: same sharpness as training, both train & val positives masked
+                    logits, target = _score_weighted_obj(
+                        model,
+                        batch["user_id"].to(device),
+                        batch["user_cat_feats"].to(device),
+                        batch["user_numeric_feats"].to(device),
+                        batch["item_id"].to(device),
+                        item_ids_t, item_categories_gpu,
+                        val_pos_mask, num_negatives,
+                        score_sharpness, device
+                    )
+                elif negative_sampling == 'watch-ratio':
+                    # Watch-ratio: use validation-specific weights; training positives are masked out
+                    logits, target = _watch_ratio_weighted_obj(
+                        model,
+                        batch["user_id"].to(device),
+                        batch["user_cat_feats"].to(device),
+                        batch["user_numeric_feats"].to(device),
+                        batch["item_id"].to(device),
+                        item_ids_t, item_categories_gpu,
+                        val_wr_weights, num_negatives, device
+                    )
+                else:
+                    # Uniform: K random catalogue items, same as training (no masking)
+                    neg_item_ids = torch.randint(
+                        0, NUM_ITEMS, (val_negatives,), device=device
+                    )
+                    neg_item_categories = item_categories_gpu[neg_item_ids]
+                    logits = model(
+                        user_ids=batch["user_id"].to(device),
+                        pos_item_ids=batch["item_id"].to(device),
+                        neg_item_ids=neg_item_ids,
+                        user_cat_feats=batch["user_cat_feats"].to(device),
+                        user_numeric_feats=batch["user_numeric_feats"].to(device),
+                        pos_item_categories=batch["item_categories"].to(device),
+                        neg_item_categories=neg_item_categories
+                    )
+                    target = torch.zeros(logits.size(0), dtype=torch.long, device=device)
                 val_loss += loss_fn(logits, target).item()
             val_loss /= len(val_loader) # Track per-batch average loss
 
@@ -762,20 +861,17 @@ def visualise(
 
     fig, (ax_loss, ax_recall, ax_ndcg) = plt.subplots(1, 3, figsize=(24, 10)) # Set up superplot
 
-    match metrics["negative_sampling"]:
-        case 'in-batch':
-            train_label = 'Training Loss (in-batch negatives)'
-        case 'uniform':
-            train_label = f'Training Loss ({metrics["num_negatives"]} global uniform negatives)'
-        case 'score-weighted':
-            train_label = f'Training Loss ({metrics["num_negatives"]} per-user score-weighted negatives, sharpness={metrics["score_sharpness"]})'
-
     # Plot training vs. validation loss
-    ax_loss.plot(epochs, metrics["train_loss"], label=train_label)
-    ax_loss.plot(epochs, metrics["val_loss"], label=f"Validation Loss ({metrics["val_negatives"]} per-user uniform negatives)")
+    ax_loss.plot(epochs, metrics["train_loss"], label="Training Loss")
+    ax_loss.plot(epochs, metrics["val_loss"], label="Validation Loss")
     ax_loss.set_xlabel("Epoch")
     ax_loss.set_ylabel("Mean per-Batch Cross-Entropy Loss")
-    ax_loss.set_title("Training & Validation Loss per Epoch")
+    ax_loss.set_title(
+        f"Training & Validation Loss per Epoch ({metrics['negative_sampling']} negatives"
+        +   f", sharpness={metrics["score_sharpness"]})" 
+            if metrics['negative_sampling'] == 'score-weighted'
+            else ")"
+    )        
     ax_loss.legend(fontsize=10, loc='upper right')
     ax_loss.grid(True, alpha=0.3)
 
