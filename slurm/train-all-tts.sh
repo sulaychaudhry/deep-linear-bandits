@@ -18,9 +18,11 @@ add main                "--hidden-size 256 --hidden-size 128"
 add deep                "--hidden-size 256 --hidden-size 128 --hidden-size 64"
 
 # Look at new hard negatives approach
-add wr-neg              "--negative-sampling watch-ratio"
-add wr-neg-main         "--negative-sampling watch-ratio --hidden-size 256 --hidden-size 128"
-add wr-neg-deep         "--negative-sampling watch-ratio --hidden-size 256 --hidden-size 128 --hidden-size 64"
+add wr-neg1              "--negative-sampling watch-ratio --optimiser adamw --dropout 0.5 --wr-band-ratio 1.0 1.0 1.0 1.0 1.0"
+add wr-neg2              "--negative-sampling watch-ratio --optimiser adamw --dropout 0.5 --wr-band-ratio 1.0 4.0 3.0 2.0 1.0"
+add wr-neg3              "--negative-sampling watch-ratio --optimiser adamw --dropout 0.5 --wr-band-ratio 1.0 10.0 8.0 4.0 1.0"
+add wr-neg3              "--negative-sampling watch-ratio --optimiser adamw --dropout 0.5 --wr-band-ratio 1.0 20.0 14.0 6.0 1.0"
+add wr-neg4              "--negative-sampling watch-ratio --optimiser adamw --dropout 0.5 --wr-band-ratio 1.0 50.0 30.0 15.0 1.0"
 
 # Look at potential bottlenecks: strip down depth of architecture
 add narrow-64-out-32    "--hidden-size 64 --output-size 32"
