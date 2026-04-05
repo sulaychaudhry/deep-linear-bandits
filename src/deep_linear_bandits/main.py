@@ -153,12 +153,13 @@ def cli() -> None:
     help='Negative sampling strategy: "uniform" samples K random items per batch; "in-batch" uses other positives in the batch as negatives; "score-weighted" samples each user\'s K negatives proportional to current model scores (hard negative mining relative to model current embedding space); "watch-ratio" uses the user\'s watch ratio for a video to place it into a negative hardness band, with different bands having different sampling probabilities (hard negative mining relative to how little the user watched the video).'
 )
 @click.option(
-    '--wr-band-probs',
+    '--wr-band-ratio',
     multiple=True,
     nargs=5,
-    type=click.FloatRange(min=0.0, max=1.0),
-    default=(0.0, 0.25, 0.25, 0.25, 0.25),
-    help='watch_ratio band sampling probabilities for `--negative-sampling watch-ratio`: (UNSEEN, [0.0, 0.5), [0.5, 1.0), [1.0, 1.5), [1.5, 2.0)); must sum to 1.'
+    type=click.FloatRange(min=0.0),
+    default=(0.0, 1.0, 1.0, 1.0, 1.0),
+    show_default=True,
+    help='watch_ratio band sampling ratio for `--negative-sampling watch-ratio`: (UNSEEN, [0.0, 0.5), [0.5, 1.0), [1.0, 1.5), [1.5, 2.0)); normalised to probabilities internally, e.g. (0, 3, 1, 1, 1) gives 50% from the hardest band'
 )
 @click.option(
     '--score-sharpness',
@@ -241,7 +242,7 @@ def train_tt(
     epochs: int,
     num_negatives: int,
     negative_sampling: str,
-    wr_band_probs: tuple[float, ...],
+    wr_band_ratio: tuple[float, ...],
     score_sharpness: float,
     lr: float,
     optimiser: str,
@@ -262,8 +263,11 @@ def train_tt(
     if skip_towers and side_features:
         raise click.BadOptionUsage("Debug (experimental) flag --skip-towers is enabled but without --no-side-features; user and item embedding widths are mismatched and will not be suitable for computing dot-product similarities.")
     
-    if sum(wr_band_probs) != 1.0:
-        raise click.BadParameter(f"Flag wr-band-probs={str(wr_band_probs)} probabilities must sum to 1.0.", param_hint='--wr-band-probs')
+    # Normalise parts to probabilities; error only if all parts are zero
+    parts_sum = sum(wr_band_ratio)
+    if parts_sum == 0.0:
+        raise click.BadParameter(f"Flag wr-band-ratio={str(wr_band_ratio)}: at least one value must be non-zero.", param_hint='--wr-band-ratio')
+    wr_band_probs = tuple(p / parts_sum for p in wr_band_ratio)
 
     # Set up the directory for saving this model & its metrics
     path = DLB_DIR + f'tt-models/{save_name}/'
