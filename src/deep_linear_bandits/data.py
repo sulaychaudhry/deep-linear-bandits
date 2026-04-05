@@ -69,13 +69,14 @@ def build_wr_weight_matrix(
 ) -> torch.Tensor:
     """
     Builds a (NUM_USERS, NUM_ITEMS) matrix of per-user per-item sampling weights for
-    watch_ratio-based hard negative sampling. The item bands are:
+    watch_ratio-based hard negative sampling. The item bands divide [0, T) into 4 equal
+    intervals where T = watch_threshold, so the boundaries scale with the threshold:
         0 -> unseen in this split
-        1 -> watch_ratio in [0.0, 0.5)
-        2 -> watch_ratio in [0.5, 1.0)
-        3 -> watch_ratio in [1.0, 1.5)
-        4 -> watch_ratio in [1.5, watch_threshold)
-    & the probabilities for picking each group are derived from wr_band_probs.
+        1 -> watch_ratio in [0,   T/4)   hardest negatives
+        2 -> watch_ratio in [T/4, T/2)
+        3 -> watch_ratio in [T/2, 3T/4)
+        4 -> watch_ratio in [3T/4, T)    softest negatives
+    & the probabilities for picking each band are derived from wr_band_probs.
 
     Positive items always have weight 0 so that they're never sampled.
     Empty bands for a user also contribute 0 weight.
@@ -91,13 +92,9 @@ def build_wr_weight_matrix(
         weights: (NUM_USERS, NUM_ITEMS) float32 tensor of weights ready for torch.multinomial
     """
 
-    # So:
-    # < 0.5 -> 1
-    # [0.5,1) -> 2
-    # [1,1.5) -> 3
-    # [1.5, threshold) -> 4
-    # >= threshold -> 5
-    bins = np.array([0.5, 1.0, 1.5, watch_threshold])
+    # 4 equal intervals from 0 to watch_threshold; upper edges at T/4, T/2, 3T/4, T
+    # np.digitize with these bins assigns: [0, T/4) -> 1, ..., [3T/4, T) -> 4; and >= T -> 5
+    bins = np.linspace(0, watch_threshold, 5)[1:]
     band_ids = np.digitize(all_interactions["watch_ratio"].to_numpy(), bins) + 1
 
     uids = all_interactions["user_id"].to_numpy(dtype=np.int64)

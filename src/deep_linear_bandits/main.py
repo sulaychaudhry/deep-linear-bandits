@@ -157,9 +157,9 @@ def cli() -> None:
     multiple=True,
     nargs=5,
     type=click.FloatRange(min=0.0),
-    default=(0.0, 1.0, 1.0, 1.0, 1.0),
+    default=(1.0, 4.0, 3.0, 2.0, 1.0),
     show_default=True,
-    help='watch_ratio band sampling ratio for `--negative-sampling watch-ratio`: (UNSEEN, [0.0, 0.5), [0.5, 1.0), [1.0, 1.5), [1.5, 2.0)); normalised to probabilities internally, e.g. (0, 3, 1, 1, 1) gives 50% from the hardest band'
+    help='watch_ratio band sampling ratio for `--negative-sampling watch-ratio`: (UNSEEN, [0, T/4), [T/4, T/2), [T/2, 3T/4), [3T/4, T)) where T is the watch threshold; normalised to probabilities internally, e.g. (1, 4, 3, 2, 1) -> (0.09, 0.36, 0.27, 0.18, 0.09)'
 )
 @click.option(
     '--score-sharpness',
