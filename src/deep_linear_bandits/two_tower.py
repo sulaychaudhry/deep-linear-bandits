@@ -113,7 +113,7 @@ class UserTower(nn.Module):
                 for i, emb in enumerate(self.cat_embs)
             ], dim=1)
 
-            # Combine user ID & categorical features as total feature input for the User Tower
+            # Combine user ID & features as total feature input for the User Tower
             tower_input = torch.cat(
                 (id_emb, cat_embs, user_numeric_feats), dim=1
             )

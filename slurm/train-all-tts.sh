@@ -17,6 +17,16 @@ add default             ""
 add main                "--hidden-size 256 --hidden-size 128"
 add deep                "--hidden-size 256 --hidden-size 128 --hidden-size 64"
 
+# Look at potential bottlenecks: strip down depth of architecture
+add narrow-64-out-32    "--hidden-size 64 --output-size 32"
+add narrow-48-out-32    "--hidden-size 48 --output-size 32"
+add narrow-64-out-16    "--hidden-size 64 --output-size 16"
+add narrow-48-out-16    "--hidden-size 48 --output-size 16"
+
+# Look at how ID dimensions are affecting things:
+add n48o16-id16         "--id-emb-dims 16 --hidden-size 48 --output-size 16"
+add n48o16-itemftr32    "--item-cat-emb-dims 32 --hidden-size 48 --output-size 16"
+
 # Try using score-weighted negative sampling
 # (i.e. informative per-user hard negatives not just easy per-batch uniform ones)
 add hard-negs-0         "--negative-sampling score-weighted --score-sharpness 0" # Per-user uniform negatives
