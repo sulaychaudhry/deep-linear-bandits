@@ -39,7 +39,7 @@ def preprocess_krbig_interactions(
 
     # Deduplicate (user_id, video_id) pairs keeping the max watch_ratio;
     # a user may have watched the same video multiple times
-    bm = bm.groupby(["user_id", "video_id"])["watch_ratio"].max()
+    bm = bm.groupby(["user_id", "video_id"])["watch_ratio"].max().reset_index()
 
     # Users with fewer than 5 total interactions contribute entirely to training
     user_counts = bm["user_id"].value_counts()
@@ -109,7 +109,7 @@ def build_wr_weight_matrix(
 
     # Mark excluded items before computing counts so they don't affect band probabilities
     # masked -> -1
-    if mask_user and mask_item:
+    if mask_user is not None:
         band_matrix[mask_user, mask_item] = -1
 
     band_matrix = torch.from_numpy(band_matrix)
