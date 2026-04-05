@@ -154,7 +154,6 @@ def cli() -> None:
 )
 @click.option(
     '--wr-band-ratio',
-    multiple=True,
     nargs=5,
     type=click.FloatRange(min=0.0),
     default=(1.0, 4.0, 3.0, 2.0, 1.0),
