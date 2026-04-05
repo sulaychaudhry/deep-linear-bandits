@@ -867,10 +867,12 @@ def visualise(
     ax_loss.set_ylabel("Mean per-Batch Cross-Entropy Loss")
     ax_loss.set_title(
         f"Training & Validation Loss per Epoch ({metrics['negative_sampling']} negatives"
-        +   f", sharpness={metrics["score_sharpness"]})" 
-            if metrics['negative_sampling'] == 'score-weighted'
-            else ")"
-    )        
+        +   (
+                f", sharpness={metrics["score_sharpness"]})" 
+                if metrics['negative_sampling'] == 'score-weighted'
+                else ")"
+            )
+    )
     ax_loss.legend(fontsize=10, loc='upper right')
     ax_loss.grid(True, alpha=0.3)
 
