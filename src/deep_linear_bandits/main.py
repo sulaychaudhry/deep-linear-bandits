@@ -158,7 +158,7 @@ def cli() -> None:
     type=click.FloatRange(min=0.0),
     default=(1.0, 4.0, 3.0, 2.0, 1.0),
     show_default=True,
-    help='watch_ratio band sampling ratio for `--negative-sampling watch-ratio`: (UNSEEN, [0, T/4), [T/4, T/2), [T/2, 3T/4), [3T/4, T)) where T is the watch threshold; normalised to probabilities internally, e.g. (1, 4, 3, 2, 1) -> (0.09, 0.36, 0.27, 0.18, 0.09)'
+    help='watch_ratio band per-item sampling multipliers for `--negative-sampling watch-ratio`: (UNSEEN, [0, T/4), [T/4, T/2), [T/2, 3T/4), [3T/4, T)) where T is the watch threshold; each value scales how likely an item in that band is vs. a value of 1, so all-1s = uniform, (1, 4, 3, 2, 1) makes [0, T/4) items 4x more likely per item than unseen items.'
 )
 @click.option(
     '--score-sharpness',
@@ -262,11 +262,8 @@ def train_tt(
     if skip_towers and side_features:
         raise click.BadOptionUsage("Debug (experimental) flag --skip-towers is enabled but without --no-side-features; user and item embedding widths are mismatched and will not be suitable for computing dot-product similarities.")
     
-    # Normalise parts to probabilities; error only if all parts are zero
-    parts_sum = sum(wr_band_ratio)
-    if parts_sum == 0.0:
+    if all(r == 0.0 for r in wr_band_ratio):
         raise click.BadParameter(f"Flag wr-band-ratio={str(wr_band_ratio)}: at least one value must be non-zero.", param_hint='--wr-band-ratio')
-    wr_band_probs = tuple(p / parts_sum for p in wr_band_ratio)
 
     # Set up the directory for saving this model & its metrics
     path = DLB_DIR + f'tt-models/{save_name}/'
@@ -303,10 +300,10 @@ def train_tt(
     # from training positives
     if negative_sampling == 'watch-ratio':
         train_wr_weights = dlb_data.build_wr_weight_matrix(
-            all_intrs_train, wr_band_probs, watch_threshold
+            all_intrs_train, wr_band_ratio, watch_threshold
         ).to(device)
         val_wr_weights = dlb_data.build_wr_weight_matrix(
-            all_intrs_val, wr_band_probs, watch_threshold,
+            all_intrs_val, wr_band_ratio, watch_threshold,
             mask_user=pos_intrs_train["user_id"].to_numpy(),
             mask_item=pos_intrs_train["video_id"].to_numpy()
         ).to(device)

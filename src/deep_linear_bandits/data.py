@@ -62,13 +62,13 @@ def preprocess_krbig_interactions(
 
 def build_wr_weight_matrix(
     all_interactions: pd.DataFrame,
-    wr_band_probs: tuple[float, ...],
+    wr_band_ratio: tuple[float, ...],
     watch_threshold: float,
     mask_user: np.ndarray = None,
     mask_item: np.ndarray = None
 ) -> torch.Tensor:
     """
-    Builds a (NUM_USERS, NUM_ITEMS) matrix of per-user per-item sampling weights for
+    Builds a (NUM_USERS, NUM_ITEMS) matrix of per-item sampling weights for
     watch_ratio-based hard negative sampling. The item bands divide [0, T) into 4 equal
     intervals where T = watch_threshold, so the boundaries scale with the threshold:
         0 -> unseen in this split
@@ -76,14 +76,22 @@ def build_wr_weight_matrix(
         2 -> watch_ratio in [T/4, T/2)
         3 -> watch_ratio in [T/2, 3T/4)
         4 -> watch_ratio in [3T/4, T)    softest negatives
-    & the probabilities for picking each band are derived from wr_band_probs.
 
-    Positive items always have weight 0 so that they're never sampled.
-    Empty bands for a user also contribute 0 weight.
+    wr_band_ratio is a per-item multiplier on a uniform baseline: each non-positive item
+    starts with weight 1, then gets multiplied by the ratio for its band. All-1s ratios
+    give exactly uniform sampling.
+     
+    e.g. (1, 4, 3, 2, 1) makes each hardest-band item 4x more likely than an unseen item
+    to be sampled; the large unseen pool still dominates.
+
+    This is preferable to assigning a fixed total probability per band, where small WR
+    bands (few tens of items) would crowd out the unseen band (about 10k items).
+
+    Positive items always have weight 0 & are never sampled.
 
     Parameters
         all_interactions: DataFrame with | user_id | video_id | watch_ratio
-        wr_band_probs:    5-tuple of the probabilities for picking each band
+        wr_band_ratio:    5-tuple of per-item multipliers vs. uniform (1 = uniform weight)
         watch_threshold:  watch_ratio >= watch_threshold denotes positives
         mask_user:        user IDs of user-item pairs that need masking out
         mask_item:        item IDs of user-item pairs that need masking out
@@ -93,38 +101,32 @@ def build_wr_weight_matrix(
     """
 
     # 4 equal intervals from 0 to watch_threshold; upper edges at T/4, T/2, 3T/4, T
-    # np.digitize with these bins assigns: [0, T/4) -> 1, ..., [3T/4, T) -> 4; and >= T -> 5
+    # np.digitize assigns: [0, T/4) -> 1, [T/4, T/2) -> 2, [T/2, 3T/4) -> 3, [3T/4, T) -> 4; >= T -> 5
     bins = np.linspace(0, watch_threshold, 5)[1:]
     band_ids = np.digitize(all_interactions["watch_ratio"].to_numpy(), bins) + 1
 
     uids = all_interactions["user_id"].to_numpy(dtype=np.int64)
     vids = all_interactions["video_id"].to_numpy(dtype=np.int64)
 
-    # Add the unseen -> 0
+    # Default 0 = unseen; interactions set their band (1-4 for WR bands, 5 for positives)
     band_matrix = np.full((NUM_USERS, NUM_ITEMS), 0, dtype=np.int8)
     band_matrix[uids, vids] = band_ids.astype(np.int8)
 
-    # Mark excluded items before computing counts so they don't affect band probabilities
-    # masked -> -1
+    # Mark excluded items as -1 before building weights
     if mask_user is not None:
         band_matrix[mask_user, mask_item] = -1
 
     band_matrix = torch.from_numpy(band_matrix)
+
+    # Give each item exactly its per-item weight
     weights = torch.zeros(NUM_USERS, NUM_ITEMS, dtype=torch.float32)
-    
-    for band, prob in enumerate(wr_band_probs):
-        if prob == 0.0:
+    for band, ratio in enumerate(wr_band_ratio):
+        if ratio == 0.0:
             continue
-
-        mask = (band_matrix == band)
-        counts = mask.sum(dim=1) # for each user check how many items in this band
-        rows, cols = mask.nonzero(as_tuple=True)
-
+        rows, cols = (band_matrix == band).nonzero(as_tuple=True)
         if rows.numel() == 0:
             continue
-
-        # Distribute probability across all members of band
-        weights[rows, cols] = prob / counts[rows].float()
+        weights[rows, cols] = ratio
 
     return weights
 
