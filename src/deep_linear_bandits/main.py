@@ -87,14 +87,14 @@ def cli() -> None:
     '--hidden-size',
     type=click.IntRange(1),
     multiple=True,
-    default=(128,),
+    default=(256, 128),
     show_default=True,
     help='Repeat for each hidden layer, e.g. --hidden-size 256 --hidden-size 128'
 )
 @click.option(
     '--output-size',
     type=click.IntRange(1),
-    default=64,
+    default=32,
     show_default=True,
     help='The final output dimensions of a user/item embedding after the two-tower network.'
 )
@@ -143,7 +143,7 @@ def cli() -> None:
     type=click.IntRange(1),
     default=256,
     show_default=True,
-    help='The number of uniform negatives to sample per positive interaction (only used with --negative-sampling uniform/score-weighted).'
+    help='The number of uniform negatives to sample per positive interaction (only used with --negative-sampling uniform/score-weighted/watch-ratio).'
 )
 @click.option(
     '--negative-sampling',

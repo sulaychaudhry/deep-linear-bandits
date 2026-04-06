@@ -12,87 +12,56 @@ FLAGS=()
 
 add() { NAMES+=("$1"); FLAGS+=("$2"); }
 
-# Default (1 hidden layer, 128-wide) and different tower architectures
+# Default config: (hidden sizes [256, 128], output dims 32)
 add default             ""
-add main                "--hidden-size 256 --hidden-size 128"
+
+# Different tower configurations
+add narrow              "--hidden-size 128 --hidden-size 64"
+add narrowest           "--hidden-size 64  --hidden-size 32"
+add wide                "--hidden-size 512 --hidden-size 256"
 add deep                "--hidden-size 256 --hidden-size 128 --hidden-size 64"
+add shallow             "--hidden-size 256"
 
-# Look at new hard negatives approach
-add wr-neg1              "--negative-sampling watch-ratio --optimiser adamw --dropout 0.5 --wr-band-ratio 1.0 1.0 1.0 1.0 1.0"
-add wr-neg2              "--negative-sampling watch-ratio --optimiser adamw --dropout 0.5 --wr-band-ratio 1.0 4.0 3.0 2.0 1.0"
-add wr-neg3              "--negative-sampling watch-ratio --optimiser adamw --dropout 0.5 --wr-band-ratio 1.0 10.0 8.0 4.0 1.0"
-add wr-neg3              "--negative-sampling watch-ratio --optimiser adamw --dropout 0.5 --wr-band-ratio 1.0 20.0 14.0 6.0 1.0"
-add wr-neg4              "--negative-sampling watch-ratio --optimiser adamw --dropout 0.5 --wr-band-ratio 1.0 50.0 30.0 15.0 1.0"
-
-# Look at potential bottlenecks: strip down depth of architecture
-add narrow-64-out-32    "--hidden-size 64 --output-size 32"
-add narrow-48-out-32    "--hidden-size 48 --output-size 32"
-add narrow-64-out-16    "--hidden-size 64 --output-size 16"
-add narrow-48-out-16    "--hidden-size 48 --output-size 16"
-
-# Look at how ID dimensions are affecting things:
-add n48o16-id16         "--id-emb-dims 16 --hidden-size 48 --output-size 16"
-add n48o16-itemftr32    "--item-cat-emb-dims 32 --hidden-size 48 --output-size 16"
-
-# Try using score-weighted negative sampling
-# (i.e. informative per-user hard negatives not just easy per-batch uniform ones)
-add hard-negs-0         "--negative-sampling score-weighted --score-sharpness 0" # Per-user uniform negatives
-add hard-negs-05        "--negative-sampling score-weighted --score-sharpness 0.5"
-add hard-negs-1         "--negative-sampling score-weighted --score-sharpness 1"
-add hard-negs-5         "--negative-sampling score-weighted --score-sharpness 5"
-add hard-negs-10        "--negative-sampling score-weighted --score-sharpness 10"
-add hard-negs-50        "--negative-sampling score-weighted --score-sharpness 10"
-add hard-negs-100       "--negative-sampling score-weighted --score-sharpness 10"
-
-# Look at how it performs on the deeper architectures too
-add hn1-main            "--negative-sampling score-weighted --score-sharpness 1 --hidden-size 256 --hidden-size 128"
-add hn5-main            "--negative-sampling score-weighted --score-sharpness 5 --hidden-size 256 --hidden-size 128"
-add hn10-main           "--negative-sampling score-weighted --score-sharpness 10 --hidden-size 256 --hidden-size 128"
-add hn1-deep            "--negative-sampling score-weighted --score-sharpness 1 --hidden-size 256 --hidden-size 128 --hidden-size 64"
-add hn5-deep            "--negative-sampling score-weighted --score-sharpness 5 --hidden-size 256 --hidden-size 128 --hidden-size 64"
-add hn10-deep           "--negative-sampling score-weighted --score-sharpness 10 --hidden-size 256 --hidden-size 128 --hidden-size 64"
-
-# Try varying the learning rate to see if it can learn faster
-add hn1-main-lr-2em3    "--negative-sampling score-weighted --score-sharpness 1 --hidden-size 256 --hidden-size 128 --lr 0.002"
-add hn1-main-lr-3em3    "--negative-sampling score-weighted --score-sharpness 1 --hidden-size 256 --hidden-size 128 --lr 0.003"
-
-# Side features ablation
+# Ablations
 add no-sidefeats        "--no-side-features"
-
-# Linear towers (no non-linearity)
 add no-relu             "--no-relu"
-
-# MF baseline (id-emb-dims=64 to match default output dims without tower transformation)
-add mf-baseline         "--skip-towers --no-side-features --id-emb-dims 64"
-
-# Output embedding dimensionality (i.e. context vector size for bandits)
-add dim-32              "--output-size 32"
-add dim-128             "--output-size 128"
-
-# Effects of L2 normalisation
+add mf-baseline         "--skip-towers --no-side-features"
 add no-l2               "--no-l2-norm"
 
-# Logit temperature (default is 0.07)
+# Output embedding dimensionality (default is 32)
+add dim-16              "--output-size 16"
+add dim-64              "--output-size 64"
+
+# Logit temperature (i.e. training sharpness; default is 0.07, lower=sharper)
 add temp-005            "--logit-temp 0.05"
 add temp-01             "--logit-temp 0.1"
 
-# Show effects of in-batch negative sampling
+# Show effects of different sampling techniques (default: global uniform)
 add in-batch-neg        "--negative-sampling in-batch"
+add user-uniform-neg    "--negative-sampling score-weighted --score-sharpness 0"
+add score-weight-neg1   "--negative-sampling score-weighted --score-sharpness 1"
+add score-weight-neg2   "--negative-sampling score-weighted --score-sharpness 3"
+add wr-banded-neg1      "--negative-sampling watch-ratio --wr-band-ratio 1 4 3 2 1"
+add wr-banded-neg2      "--negative-sampling watch-ratio --wr-band-ratio 1 10 8 4 2"
 
-# Show effects of weight decay
-add adamw               "--optimiser adamw"
-
-# Watch threshold (default is 2.0)
-add wt-1                "--watch-threshold 1.0"
-add wt-3                "--watch-threshold 3.0"
-
-# Number of uniform negatives (default is 256)
+# Number of negatives if not in-batch (default is 256)
 add neg-64              "--num-negatives 64"
 add neg-512             "--num-negatives 512"
 
-# Dropout changes (default is 0.2)
+# Varying dropout (default is 0.2)
 add no-dropout          "--dropout 0.0"
 add dropout-04          "--dropout 0.4"
+
+# Quick look at weight decay
+add adamw               "--optimiser adamw"
+
+# Varying learning rate (default is 1e-3)
+add lr-5em4             "--lr 0.0005"
+add lr-2em3             "--lr 0.002"
+
+# Watch threshold (work focuses around 2.0, but interesting to see)
+add wt-1                "--watch-threshold 1.0"
+add wt-3                "--watch-threshold 3.0"
 
 for i in "${!NAMES[@]}"; do
     name="${NAMES[$i]}"
