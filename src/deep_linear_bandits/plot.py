@@ -114,9 +114,11 @@ def _plot_ba_metric_over_time(
         mean_values: np.ndarray,    # (n_policies, n_checkpoints)
         std_values: np.ndarray,     # (n_policies, n_checkpoints)
         labels: list[str],
+        seed_count: int,
         output_dir: str,
         filename: str,
-        longtail_percentile: float | None
+        longtail_percentile: float | None,
+        legend_loc: str = 'best'    # Legends keep blocking the plots too much, so passing in explicitly
 ) -> None:
     """
     Plot a single beyond-accuracy metric over time, one subplot per policy family.
@@ -124,10 +126,17 @@ def _plot_ba_metric_over_time(
 
     groups = _group_policies(labels)
 
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    subtitle = (
+        f"averaged over {seed_count} simulations"
+        if seed_count > 1
+        else "shared random seed"
+    )
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6), sharey=True)
     fig.suptitle(
         f"Policy simulation: {metric_name} over time"
         + (f" (threshold: {longtail_percentile:.1f}%)" if longtail_percentile else "")
+        + f" ({subtitle})"
     )
 
     # Plot all policy metric means (the cumulative ones) alongside the std-deviations too
@@ -159,7 +168,7 @@ def _plot_ba_metric_over_time(
         ax.set_xlabel("Round")
         ax.set_ylabel(metric_name)
         ax.grid(True, alpha=0.3)
-        ax.legend()
+        ax.legend(loc=legend_loc)
 
     plt.tight_layout()
     plt.savefig(output_dir + filename)
@@ -170,15 +179,17 @@ def plot_ba_metrics_over_time(metrics: dict, output_dir: str) -> None:
     Plot Gini, long-tail coverage, and ARP over time from their precomputed mean/std arrays.
     """
     
-    for mean_key, std_key, name, fname in [
-        ('mean_gini_over_time',       'std_gini_over_time',       "Gini Coefficient",                   "gini.png"),
-        ('mean_coverage_over_time',   'std_coverage_over_time',   "Long-Tail Coverage",                 "coverage.png"),
-        ('mean_arp_over_time',        'std_arp_over_time',        "Average Recommendation Popularity",  "arp.png"),
+    for mean_key, std_key, name, fname, loc in [
+        ('mean_gini_over_time',     'std_gini_over_time',     "Gini Coefficient",                   "gini.png",      'lower left'),
+        ('mean_coverage_over_time', 'std_coverage_over_time', "Long-Tail Coverage",                 "coverage.png",  'upper left'),
+        ('mean_arp_over_time',      'std_arp_over_time',      "Average Recommendation Popularity",  "arp.png",       'lower right'),
     ]:
         _plot_ba_metric_over_time(
             name, np.array(metrics['metric_rounds']),
             np.array(metrics[mean_key]), np.array(metrics[std_key]),
-            metrics['labels'], output_dir, fname, metrics['longtail_percentile']
+            metrics['labels'], metrics['seed_count'], output_dir, fname,
+            (metrics['longtail_percentile'] if name=="Long-Tail Coverage" else None),
+            legend_loc=loc
         )
 
 def plot_regret_rolling(metrics: dict, output_dir: str, window: int = 500) -> None:
@@ -245,13 +256,12 @@ def plot_final_reward_bars(metrics: dict, output_dir: str) -> None:
     Horizontal bar chart of final cumulative reward per policy with +/-1 std error bars.
     """
 
-    labels         = metrics['labels']
-    final_cum_mean = np.array(metrics['mean_final_cumulative_rewards'])
-    final_cum_std  = np.array(metrics['std_final_cumulative_rewards'])
+    labels = metrics['labels']
+    rounds = len(metrics['mean_rewards'][0])
 
     # Build per-policy colours matching the family convention
     groups = _group_policies(labels)
-    colours = ['#444444', '#aaaaaa']  # Greedy, Random
+    colours = [c for _, c in BASELINES]
     for family_prefix, cmap_name, *_ in POLICY_FAMILIES:
         indices = groups[family_prefix]
         colours.extend(_get_family_colours(len(indices), cmap_name))
@@ -259,11 +269,11 @@ def plot_final_reward_bars(metrics: dict, output_dir: str) -> None:
     # Plot final cumulative reward across all policies with std error bars (to show cross-seed variation)
     fig, ax = plt.subplots(figsize=(10, max(6, len(labels) * 0.45)))
     y = np.arange(len(labels))
-    ax.barh(y, final_cum_mean, xerr=final_cum_std, color=colours, capsize=4, alpha=0.85)
+    ax.barh(y, metrics['mean_final_cumulative_rewards'], xerr=metrics['std_final_cumulative_rewards'], color=colours, capsize=4, alpha=0.85)
     ax.set_yticks(y)
     ax.set_yticklabels(labels)
     ax.set_xlabel("Final cumulative reward")
-    ax.set_title("Policy comparison: final cumulative reward (mean +/- std across seeds)")
+    ax.set_title(f"Policy comparison: final cumulative reward after {rounds} rounds (mean +/- std across {metrics['seed_count']} seeds)")
     ax.grid(True, axis='x', alpha=0.3)
     plt.tight_layout()
     plt.savefig(output_dir + "final_reward_bars.png")
@@ -275,24 +285,24 @@ def plot_final_ba_bars(metrics: dict, output_dir: str) -> None:
     with +/-1 std error bars; one subplot per metric.
     """
 
-    labels              = metrics['labels']
-    longtail_percentile = metrics['longtail_percentile']
+    labels = metrics['labels']
+    rounds = len(metrics['mean_rewards'][0])
 
     # Build per-policy colours matching the family convention
     groups = _group_policies(labels)
-    colours = ['#444444', '#aaaaaa']  # Greedy, Random
+    colours = [c for _, c in BASELINES]
     for family_prefix, cmap_name, *_ in POLICY_FAMILIES:
         indices = groups[family_prefix]
         colours.extend(_get_family_colours(len(indices), cmap_name))
 
     ba_metrics = [
         (metrics['mean_gini'],              metrics['std_gini'],              "Gini Coefficient"),
-        (metrics['mean_longtail_coverage'], metrics['std_longtail_coverage'], f"Long-Tail Coverage (threshold: {longtail_percentile:.0f}%)"),
+        (metrics['mean_longtail_coverage'], metrics['std_longtail_coverage'], f"Long-Tail Coverage (threshold: {metrics['longtail_percentile']:.0f}%)"),
         (metrics['mean_arp'],               metrics['std_arp'],               "Average Recommendation Popularity"),
     ]
 
     fig, axes = plt.subplots(1, 3, figsize=(24, max(6, len(labels) * 0.45)))
-    fig.suptitle("Policy comparison: final beyond-accuracy metrics (mean +/- std across seeds)")
+    fig.suptitle(f"Policy comparison: final beyond-accuracy metrics after {rounds} rounds (mean +/- std across {metrics['seed_count']} seeds)")
     for ax, (mean_vals, std_vals, xlabel) in zip(axes, ba_metrics):
         y = np.arange(len(labels))
         ax.barh(y, np.array(mean_vals), xerr=np.array(std_vals), color=colours, capsize=4, alpha=0.85)
@@ -310,17 +320,20 @@ def plot_hyperparameter_sensitivity(metrics: dict, flags: dict, output_dir: str)
     Final cumulative reward vs hyperparameter value, one subplot per policy family.
     """
 
-    labels         = metrics['labels']
     final_cum_mean = np.array(metrics['mean_final_cumulative_rewards'])
     final_cum_std  = np.array(metrics['std_final_cumulative_rewards'])
+    rounds         = len(metrics['mean_rewards'][0])
 
-    # Baselines are drawn as horizontal reference lines on each subplot
-    greedy_val = final_cum_mean[labels.index("Greedy")]
-    random_val = final_cum_mean[labels.index("Random")]
+    groups = _group_policies(metrics['labels'])
 
-    groups = _group_policies(labels)
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-    fig.suptitle("Hyperparameter sensitivity: final cumulative reward")
+    subtitle = (
+        f"averaged over {metrics['seed_count']} simulations"
+        if metrics['seed_count'] > 1
+        else "shared random seed"
+    )
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6), sharey=True)
+    fig.suptitle(f"Hyperparameter sensitivity: final cumulative reward after {rounds} rounds ({subtitle})")
 
     # Sensitivity plots for each policy family
     for ax, (prefix, cmap_name, flag_key, param_sym) in zip(axes, POLICY_FAMILIES):
@@ -341,11 +354,13 @@ def plot_hyperparameter_sensitivity(metrics: dict, flags: dict, output_dir: str)
             params,
             [v - e for v, e in zip(values, errs)],
             [v + e for v, e in zip(values, errs)],
-            alpha=0.15, 
+            alpha=0.15,
             color=colour
         )
-        ax.axhline(greedy_val, color='#444444', linestyle='--', label='Greedy')
-        ax.axhline(random_val, color='#aaaaaa', linestyle='--', label='Random')
+        # Baselines as horizontal reference lines
+        for bl_label, bl_colour in BASELINES:
+            bl_val = final_cum_mean[metrics['labels'].index(bl_label)]
+            ax.axhline(bl_val, color=bl_colour, linestyle='--', label=bl_label)
         ax.set_xlabel(param_sym)
         ax.set_ylabel("Final cumulative reward")
         ax.set_title(f"{prefix} sensitivity")
@@ -362,58 +377,70 @@ def plot_diversity_accuracy_scatter(metrics: dict, output_dir: str) -> None:
     Each subplot is a different diversity axis, directly visualising the diversity-accuracy tradeoff.
     """
 
-    labels              = metrics['labels']
-    final_cum_mean      = np.array(metrics['mean_final_cumulative_rewards'])
-    mean_gini_final     = np.array(metrics['mean_gini'])
-    mean_coverage_final = np.array(metrics['mean_longtail_coverage'])
-    mean_arp_final      = np.array(metrics['mean_arp'])
-    longtail_percentile = metrics['longtail_percentile']
+    labels         = metrics['labels']
+    final_cum_mean = np.array(metrics['mean_final_cumulative_rewards'])
+    rounds         = len(metrics['mean_rewards'][0])
+
+    subtitle = (
+        f"averaged over {metrics['seed_count']} simulations"
+        if metrics['seed_count'] > 1
+        else "shared random seed"
+    )
 
     groups = _group_policies(labels)
-    fig, axes = plt.subplots(1, 3, figsize=(20, 6))
-    fig.suptitle("Diversity-accuracy tradeoff (final round)")
+    fig, axes = plt.subplots(1, 3, figsize=(20, 7))
+    fig.suptitle(f"Diversity-accuracy tradeoff after {rounds} rounds ({subtitle})")
 
-    for ax, (y_vals, y_label) in zip(axes, [
-        (mean_gini_final,     "Gini Coefficient"),
-        (mean_coverage_final, f"Long-Tail Coverage (threshold: {longtail_percentile:.0f}%)"),
-        (mean_arp_final,      "Average Recommendation Popularity"),
-    ]):
+    for i, (ax, (y_vals, y_label)) in enumerate(zip(axes, [
+        (metrics['mean_gini'],               "Gini Coefficient"),
+        (metrics['mean_longtail_coverage'], f"Long-Tail Coverage (threshold: {metrics['longtail_percentile']:.0f}%)"),
+        (metrics['mean_arp'],                "Average Recommendation Popularity"),
+    ])):
+        # Only label baseline points on the first subplot so fig.legend() doesn't produce duplicates
+        # (using shared legend between all subplots, since all the same policies on them)
         for bl_label, bl_colour in BASELINES:
             bl_idx = labels.index(bl_label)
             ax.scatter(
-                final_cum_mean[bl_idx], 
+                final_cum_mean[bl_idx],
                 y_vals[bl_idx],
-                color=bl_colour, 
-                s=80, 
-                marker='D', 
-                zorder=5
-            )
-            ax.annotate(
-                bl_label, 
-                (final_cum_mean[bl_idx], y_vals[bl_idx]),
-                textcoords="offset points", 
-                xytext=(5, 4), 
-                fontsize=8
+                color=bl_colour,
+                s=80,
+                marker='D',
+                zorder=5,
+                label=(bl_label if i == 0 else None)
             )
 
+        # Same logic for policy points
         for prefix, cmap_name, *_ in POLICY_FAMILIES:
             indices = groups[prefix]
             colours = _get_family_colours(len(indices), cmap_name)
             for idx, colour in zip(indices, colours):
-                ax.scatter(final_cum_mean[idx], y_vals[idx], color=colour, s=60)
-                ax.annotate(
-                    labels[idx], 
-                    (final_cum_mean[idx], y_vals[idx]),
-                    textcoords="offset points", 
-                    xytext=(5, 4), 
-                    fontsize=7
+                ax.scatter(
+                    final_cum_mean[idx], y_vals[idx], color=colour, s=60,
+                    label=(labels[idx] if i == 0 else None)
                 )
 
         ax.set_xlabel("Final cumulative reward")
         ax.set_ylabel(y_label)
         ax.grid(True, alpha=0.3)
 
+        # Long-tail coverage wasn't showing 1.0 on the axis sometimes weirdly, so just force it to use 0-1.0 axis
+        if y_label.startswith("Long-Tail"):
+            ax.set_ylim(0, 1.0)
+
+    # Single shared legend at the bottom spanning all subplots
+    handles, labs = axes[0].get_legend_handles_labels()
+    n_cols = (len(handles) + 1) // 2  # ~2 rows keeps the legend wide & readable
+    fig.legend(
+        handles, labs,
+        loc='lower center',
+        ncol=n_cols,
+        bbox_to_anchor=(0.5, 0.04),
+        frameon=True,
+        fontsize=10
+    )
     plt.tight_layout()
+    plt.subplots_adjust(bottom=0.25)  # Make room for the legend below the subplots
     plt.savefig(output_dir + "diversity_accuracy_scatter.png")
     plt.close()
 
