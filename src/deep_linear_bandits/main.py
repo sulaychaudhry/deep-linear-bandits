@@ -221,7 +221,7 @@ def cli() -> None:
 @click.option(
     '--seed',
     type=int,
-    default=int(np.random.default_rng().integers(0, 2**63)),
+    default=int(np.random.default_rng().integers(0, 2**32)),
     help='RNG seed for reproducibility. If omitted, a random seed is generated and logged.'
 )
 def train_tt(
