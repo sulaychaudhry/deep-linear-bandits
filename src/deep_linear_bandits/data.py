@@ -77,21 +77,23 @@ def build_wr_weight_matrix(
         3 -> watch_ratio in [T/2, 3T/4)
         4 -> watch_ratio in [3T/4, T)    softest negatives
 
-    wr_band_ratio is a per-item multiplier on a uniform baseline: each non-positive item
-    starts with weight 1, then gets multiplied by the ratio for its band. All-1s ratios
-    give exactly uniform sampling.
+    wr_band_ratio denotes sampling ratios for each of the bands; note that sampling is
+    per-user without replacement so in some rare situations (and with bigger negative
+    sampling pools per-user) a band with combined probability 40% is not necessarily
+    expected to be 40% of the sampled negatives, although still picked more frequently
      
-    e.g. (1, 4, 3, 2, 1) makes each hardest-band item 4x more likely than an unseen item
-    to be sampled; the large unseen pool still dominates.
+    e.g. (1, 4, 3, 2, 1) makes the hardest band 4x more likely than unseen to be sampled
 
-    This is preferable to assigning a fixed total probability per band, where small WR
-    bands (few tens of items) would crowd out the unseen band (about 10k items).
+    In practice you should sample some hard negatives but also a decent fraction of easy
+    negatives too, so that the model doesn't struggle too much to learn any relationships
+    at all; also it needs to contrastively learn to move away from the unseens too so that
+    the positives are placed meaningfully
 
-    Positive items always have weight 0 & are never sampled.
+    Positive items are never sampled.
 
     Parameters
         all_interactions: DataFrame with | user_id | video_id | watch_ratio
-        wr_band_ratio:    5-tuple of per-item multipliers vs. uniform (1 = uniform weight)
+        wr_band_ratio:    5-tuple of band ratios (all 1s = uniform)
         watch_threshold:  watch_ratio >= watch_threshold denotes positives
         mask_user:        user IDs of user-item pairs that need masking out
         mask_item:        item IDs of user-item pairs that need masking out
@@ -118,15 +120,20 @@ def build_wr_weight_matrix(
 
     band_matrix = torch.from_numpy(band_matrix)
 
-    # Give each item exactly its per-item weight
+    # Multinomial already accepts ratios (weights), so it's just a matter of
+    # splitting the weight over the members of each band
     weights = torch.zeros(NUM_USERS, NUM_ITEMS, dtype=torch.float32)
     for band, ratio in enumerate(wr_band_ratio):
         if ratio == 0.0:
             continue
-        rows, cols = (band_matrix == band).nonzero(as_tuple=True)
+
+        # Take every user, count negatives in this band, distribute weights
+        mask = (band_matrix == band)
+        counts = mask.sum(dim=1)
+        rows, cols = mask.nonzero(as_tuple=True)
         if rows.numel() == 0:
             continue
-        weights[rows, cols] = ratio
+        weights[rows, cols] = ratio / counts[rows].float()
 
     return weights
 

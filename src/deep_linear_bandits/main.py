@@ -141,7 +141,7 @@ def cli() -> None:
 @click.option(
     '--num-negatives',
     type=click.IntRange(1),
-    default=256,
+    default=20,
     show_default=True,
     help='The number of uniform negatives to sample per positive interaction (only used with --negative-sampling uniform/score-weighted/watch-ratio).'
 )
@@ -156,9 +156,9 @@ def cli() -> None:
     '--wr-band-ratio',
     nargs=5,
     type=click.FloatRange(min=0.0),
-    default=(1.0, 4.0, 3.0, 2.0, 1.0),
+    default=(0.35, 0.3, 0.2, 0.1, 0.05),
     show_default=True,
-    help='watch_ratio band per-item sampling multipliers for `--negative-sampling watch-ratio`: (UNSEEN, [0, T/4), [T/4, T/2), [T/2, 3T/4), [3T/4, T)) where T is the watch threshold; each value scales how likely an item in that band is vs. a value of 1, so all-1s = uniform, (1, 4, 3, 2, 1) makes [0, T/4) items 4x more likely per item than unseen items.'
+    help='watch_ratio band sampling ratios for `--negative-sampling watch-ratio`: (UNSEEN, [0, T/4), [T/4, T/2), [T/2, 3T/4), [3T/4, T)) where T is the watch threshold; e.g. (1, 1, 1, 1, 1) is uniform.'
 )
 @click.option(
     '--score-sharpness',
