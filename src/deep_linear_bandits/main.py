@@ -158,7 +158,7 @@ def cli() -> None:
     type=click.FloatRange(min=0.0),
     default=(0.35, 0.3, 0.2, 0.1, 0.05),
     show_default=True,
-    help='watch_ratio band sampling ratios for `--negative-sampling watch-ratio`: (UNSEEN, [0, T/4), [T/4, T/2), [T/2, 3T/4), [3T/4, T)) where T is the watch threshold; e.g. (1, 1, 1, 1, 1) is uniform.'
+    help='watch_ratio band sampling ratios for `--negative-sampling watch-ratio`: (UNSEEN, [0, T/4), [T/4, T/2), [T/2, 3T/4), [3T/4, T)) where T is the watch threshold; e.g. (1, 1, 1, 1, 1) picks items from all groups with same probability.'
 )
 @click.option(
     '--score-sharpness',
