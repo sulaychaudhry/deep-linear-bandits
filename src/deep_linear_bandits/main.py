@@ -141,7 +141,7 @@ def cli() -> None:
 @click.option(
     '--num-negatives',
     type=click.IntRange(1),
-    default=20,
+    default=256,
     show_default=True,
     help='The number of uniform negatives to sample per positive interaction (only used with --negative-sampling uniform/score-weighted/watch-ratio).'
 )
