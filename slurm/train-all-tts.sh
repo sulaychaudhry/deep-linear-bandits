@@ -41,8 +41,8 @@ add in-batch-neg        "--negative-sampling in-batch"
 add user-uniform-neg    "--negative-sampling score-weighted --score-sharpness 0"
 add score-weight-neg1   "--negative-sampling score-weighted --score-sharpness 1"
 add score-weight-neg2   "--negative-sampling score-weighted --score-sharpness 3"
-add wr-banded-neg1      "--negative-sampling watch-ratio --wr-band-ratio 1 4 3 2 1"
-add wr-banded-neg2      "--negative-sampling watch-ratio --wr-band-ratio 1 10 8 4 2"
+add wr-banded-neg1      "--negative-sampling watch-ratio --wr-band-ratio 0.15 0.25 0.25 0.2 0.15"
+add wr-banded-neg2      "--negative-sampling watch-ratio --wr-band-ratio 0.10 0.35 0.30 0.15 0.10"
 
 # Number of negatives if not in-batch (default is 256)
 add neg-64              "--num-negatives 64"
