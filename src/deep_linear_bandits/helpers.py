@@ -40,11 +40,12 @@ def best_tt(
     sort_by_k: int
 ):
     """
-    Takes all of the trained two-tower models in tt-models/ & prints out their saved performance on their different metrics, sorted in descending by the specified metric. Note of course that for fair evaluation these should all
+    Takes all of the trained two-tower models in tt-models/ & prints out their saved performance on their different metrics, sorted by the specified metric. Note of course that for fair evaluation these should all
     be trained on the same seed and other fixed control variables as appropriate.
     """
 
     models = []
+    skipped = 0
 
     for model in os.listdir(TT_DIR):
         path = TT_DIR + model
@@ -58,6 +59,7 @@ def best_tt(
             all_k = flags['metric_k']
         if sort_by_k not in all_k:
             print(f"Model `{model}` doesn't have a `{sort_by}@{sort_by_k}`, skipping...")
+            skipped += 1
             continue
 
         # Retrieve this model's saved metrics, figure out when it saved the model, retrieve correct results
@@ -77,11 +79,13 @@ def best_tt(
 
             models.append(result_dict)
 
-    models.sort(reverse=True, key = lambda x : x[f'{sort_by}@{sort_by_k}'])
-        
-    print(f"{TT_DIR} sorted by `{sort_by}@{sort_by_k}`, where available:")
+    # Sort and print (with best model at bottom for readability in terminal)
+    print()
+    models.sort(key = lambda x : x[f'{sort_by}@{sort_by_k}'])
     for i, model in enumerate(models):
-        print(f"{i+1}. ")
+        print(f"{len(models) - i}. ")
         for k,v in model.items():
             print(f"\t{k}: {v}")
         print("")
+    print(f"Above are all {TT_DIR} sorted by `{sort_by}@{sort_by_k}`, where available.")
+    print(f"(any models without a `{sort_by}@{sort_by_k}` were skipped, of which there were {skipped})")
