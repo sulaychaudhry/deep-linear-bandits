@@ -575,6 +575,15 @@ def simulate(
             f'--seed-index={seed_index} is out of range for --seed-count={seed_count} (must be 0 to {seed_count - 1}).',
             param_hint='--seed-index'
         )
+    
+    # Read watch_threshold from model's flags.json if not explicitly overridden
+    model_path = DLB_DIR + f'tt-models/{model_name}/'
+    if watch_threshold is None:
+        with open(model_path + 'flags.json', 'r') as f:
+            model_flags = json.load(f)
+        watch_threshold = model_flags['watch_threshold']
+        print(f"Using watch_threshold={watch_threshold} from model's flags.json, as none specified.")
+        flags['watch_threshold'] = watch_threshold # Update this to be reflected in flags.json correctly
 
     # Set up output directory
     path = DLB_DIR + f'simulations/{save_name}/'
@@ -596,7 +605,6 @@ def simulate(
         print(f"    {flag_name}: {str(flag_arg)}")
 
     # Load two-tower model
-    model_path = DLB_DIR + f'tt-models/{model_name}/'
     model_pt = model_path + 'model.pt'
     if not os.path.exists(model_pt):
         raise click.ClickException(f"No model weights found at {model_pt}.")
@@ -613,13 +621,6 @@ def simulate(
     )
     model.eval()
     print(f"\nLoaded two-tower model from {model_path}")
-
-    # Read watch_threshold from model's flags.json if not explicitly overridden
-    if watch_threshold is None:
-        with open(model_path + 'flags.json', 'r') as f:
-            model_flags = json.load(f)
-        watch_threshold = model_flags['watch_threshold']
-        print(f"Using watch_threshold={watch_threshold} from model's flags.json")
 
     print(f"\nLoading KuaiRec-Small (watch_threshold={watch_threshold})...")
     small_matrix = dlb_data.KRSmall(DATA_DIR, watch_threshold)
@@ -712,6 +713,32 @@ def simulate(
         )
         print(f"Simulation complete. Results saved to {path}")
 
+        # Additionally give a summary of final round results, for ease of reading & for the report
+        print(f"\nResults (final round only, saved to {path}final_round.txt):")
+        with open(path + 'final_round.txt', 'a') as f:
+            def log(text):
+                print(text)
+                print(text, file=f)
+            
+            log("FINAL ROUND RESULTS\n")
+            log(f"Model: {model_name}")
+            log(f"Rounds: {rounds}")
+            log(f"Simulation runs: {seed_count}")
+            log(f"Seed: {seed}")
+
+            log(f"\nWatch threshold: {watch_threshold}")
+            log(f"Hadamard: {hadamard}")
+            log(f"Ridge regression lambda: {lmbda}")
+            log(f"Long-tail percentile: {longtail_percentile}\n")
+
+            for i, label in enumerate(labels):
+                log(f"Policy: {label}")
+                log(f"\tCumulative reward (mean +/- std): {metrics["mean_final_cumulative_rewards"][i]} +/- {metrics["std_final_cumulative_rewards"][i]}")
+                log(f"\tCumulative regret (mean +/- std): {metrics["mean_final_cumulative_regrets"][i]} +/- {metrics["std_final_cumulative_regrets"][i]}")
+                log(f"\tGini Coefficient (mean +/- std): {metrics["mean_gini"][i]} +/- {metrics["std_gini"][i]}")
+                log(f"\tLong-Tail Coverage (mean +/- std): {metrics["mean_longtail_coverage"][i]} +/- {metrics["std_longtail_coverage"][i]}")
+                log(f"\tAverage Recommendation Popularity (mean +/- std): {metrics["mean_arp"][i]} +/- {metrics["std_arp"][i]}\n")
+
 @cli.command('collate')
 @click.option(
     '--save-name',
@@ -773,8 +800,6 @@ def collate(
     all_regrets = np.stack(all_regrets, axis=0)
     all_recommendations = np.stack(all_recommendations, axis=0)
 
-    total_seeds = all_rewards.shape[0]
-
     metric_interval = int(flags.get('metric_interval', 500))
 
     # Compute all metrics (reward/regret curves + diversity over time) across seeds
@@ -791,7 +816,7 @@ def collate(
     metrics_for_plot = {
         'labels':              labels,
         'seed':                flags['seed'],
-        'seed_count':          total_seeds,
+        'seed_count':          seed_count,
         'longtail_percentile': longtail_percentile,
         **metrics,
     }
@@ -816,9 +841,35 @@ def collate(
     for seed_file in seed_files:
         os.remove(seed_file)
 
-    print(f"\nCollation complete: {total_seeds} seeds merged.")
+    print(f"\nCollation complete: {seed_count} seeds merged.")
     print(f"Removed {len(seed_files)} per-seed files from {path}")
     print(f"Results saved to {path}")
+
+    # Additionally give a summary of final round results, for ease of reading & for the report
+    print(f"\nResults (final round only, saved to {path}final_round.txt):")
+    with open(path + 'final_round.txt', 'a') as f:
+        def log(text):
+            print(text)
+            print(text, file=f)
+        
+        log("FINAL ROUND RESULTS\n")
+        log(f"Model: {flags['model_name']}")
+        log(f"Rounds: {flags['rounds']}")
+        log(f"Simulation runs: {seed_count}")
+        log(f"Seed: {flags['seed']}")
+
+        log(f"\nWatch threshold: {flags['watch_threshold']}")
+        log(f"Hadamard: {flags['hadamard']}")
+        log(f"Ridge regression lambda: {flags['lmbda']}")
+        log(f"Long-tail percentile: {longtail_percentile}\n")
+
+        for i, label in enumerate(labels):
+            log(f"Policy: {label}")
+            log(f"\tCumulative reward (mean +/- std): {metrics["mean_final_cumulative_rewards"][i]} +/- {metrics["std_final_cumulative_rewards"][i]}")
+            log(f"\tCumulative regret (mean +/- std): {metrics["mean_final_cumulative_regrets"][i]} +/- {metrics["std_final_cumulative_regrets"][i]}")
+            log(f"\tGini Coefficient (mean +/- std): {metrics["mean_gini"][i]} +/- {metrics["std_gini"][i]}")
+            log(f"\tLong-Tail Coverage (mean +/- std): {metrics["mean_longtail_coverage"][i]} +/- {metrics["std_longtail_coverage"][i]}")
+            log(f"\tAverage Recommendation Popularity (mean +/- std): {metrics["mean_arp"][i]} +/- {metrics["std_arp"][i]}\n")
 
 @cli.command('plot')
 @click.option(
