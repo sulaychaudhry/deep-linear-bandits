@@ -8,7 +8,7 @@ LOG_DIR="${DLB_DIR}/slurm/logs"
 
 mkdir -p $LOG_DIR # If doesn't exist
 
-PARALLEL_SEEDS=false
+PARALLEL_SEEDS=true
 SEED_COUNT=10
 COMMON="--rounds 10000 --seed 117 --seed-count ${SEED_COUNT}"
 
@@ -79,11 +79,11 @@ for i in "${!NAMES[@]}"; do
         JOB_ID = $( \
             sbatch --parsable \
             --job-name="sim-${name}" \
-           --output="${LOG_DIR}/sim_${name}_%j.out" \
-           --error="${LOG_DIR}/sim_${name}__%j.err" \
-           --export=ALL,SIM_FLAGS="${flags}" \
-           --array=0-$((SEED_COUNT-1)) \
-           "${SIM_SCRIPT}" \
+            --output="${LOG_DIR}/sim_${name}_%j.out" \
+            --error="${LOG_DIR}/sim_${name}__%j.err" \
+            --export=ALL,SIM_FLAGS="${flags}" \
+            --array=0-$((SEED_COUNT-1)) \
+            "${SIM_SCRIPT}" \
         )
 
         # Dispatch collate job too
