@@ -5,6 +5,8 @@ SBATCH_SCRIPT="slurm/simulate.sbatch"
 DLB_DIR="/dcs/23/u5567816/deep-linear-bandits"
 LOG_DIR="${DLB_DIR}/slurm/logs"
 
+mkdir -p $LOG_DIR # If doesn't exist
+
 COMMON="--rounds 10000 --seed 117"
 
 NAMES=()
@@ -71,8 +73,8 @@ for i in "${!NAMES[@]}"; do
     flags="--save-name ${name} ${COMMON} ${FLAGS[$i]}"
     echo "Submitting sim-${name}: ${flags}"
     sbatch --job-name="sim-${name}" \
-           --output="${LOG_DIR}/sim_%j.out" \
-           --error="${LOG_DIR}/sim_%j.err" \
+           --output="${LOG_DIR}/sim_${name}_%j.out" \
+           --error="${LOG_DIR}/sim_${name}__%j.err" \
            --export=ALL,SIM_FLAGS="${flags}" \
            "${SBATCH_SCRIPT}"
 done

@@ -5,6 +5,8 @@ SBATCH_SCRIPT="slurm/train-tt.sbatch"
 DLB_DIR="/dcs/23/u5567816/deep-linear-bandits"
 LOG_DIR="${DLB_DIR}/slurm/logs"
 
+mkdir -p $LOG_DIR # If doesn't exist
+
 COMMON="--epochs 100 --seed 117"
 
 NAMES=()
@@ -81,8 +83,8 @@ for i in "${!NAMES[@]}"; do
     flags="--save-name ${name} ${COMMON} ${FLAGS[$i]}"
     echo "Submitting tt-${name}: ${flags}"
     sbatch --job-name="tt-${name}" \
-           --output="${LOG_DIR}/train-tt_%j.out" \
-           --error="${LOG_DIR}/train-tt_%j.err" \
+           --output="${LOG_DIR}/train-tt_${name}_%j.out" \
+           --error="${LOG_DIR}/train-tt_${name}_%j.err" \
            --export=ALL,TT_FLAGS="${flags}" \
            "${SBATCH_SCRIPT}"
 done
