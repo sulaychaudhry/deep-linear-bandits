@@ -7,7 +7,9 @@ LOG_DIR="${DLB_DIR}/slurm/logs"
 
 mkdir -p $LOG_DIR # If doesn't exist
 
-COMMON="--rounds 10000 --seed 117"
+PARALLEL_SEEDS=false
+SEED_COUNT=1
+COMMON="--rounds 10000 --seed 117 --seed-count ${SEED_COUNT}"
 
 NAMES=()
 FLAGS=()
@@ -59,7 +61,7 @@ for i in "${!NAMES[@]}"; do
     name="${NAMES[$i]}"
 
     # Skip if model already trained
-    if [[ -f "${DLB_DIR}/simulations/${name}/final_round.txt" ]]; then
+    if [[ -d "${DLB_DIR}/simulations/${name}" ]]; then
         echo "Skipping sim-${name}: simulation run already exists"
         continue
     fi
@@ -69,6 +71,24 @@ for i in "${!NAMES[@]}"; do
         echo "Skipping sim-${name}: job already in queue"
         continue
     fi
+
+    flags="--save-name ${name} ${COMMON} ${FLAGS[$i]}"
+    echo "Submitting ${SEED_COUNT} seed(s) for sim-${name}: ${flags}"
+    if [ "$PARALLEL_SEEDS" = true ]; then
+        sbatch --job-name="sim-${name}" \
+           --output="${LOG_DIR}/sim_${name}_%j.out" \
+           --error="${LOG_DIR}/sim_${name}__%j.err" \
+           --export=ALL,SIM_FLAGS="${flags}" \
+           --array=0-$((SEED_COUNT-1)) \
+           "${SBATCH_SCRIPT}"
+    else
+        sbatch --job-name="sim-${name}" \
+           --output="${LOG_DIR}/sim_${name}_%j.out" \
+           --error="${LOG_DIR}/sim_${name}__%j.err" \
+           --export=ALL,SIM_FLAGS="${flags}" \
+           "${SBATCH_SCRIPT}"
+    fi
+
 
     flags="--save-name ${name} ${COMMON} ${FLAGS[$i]}"
     echo "Submitting sim-${name}: ${flags}"

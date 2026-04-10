@@ -9,6 +9,11 @@
 echo -e "Starting job at $(date)\n"
 echo -e "Running:\n\t uv run dlb simulate ${SIM_FLAGS}"
 
-uv run dlb simulate ${SIM_FLAGS}
+if [ "$PARALLEL_SEEDS" = true ]; then
+    echo "Running seed-index=$SLURM_ARRAY_TASK_ID"
+    uv run dlb simulate ${SIM_FLAGS} --seed-index=$SLURM_ARRAY_TASK_ID
+else
+    uv run dlb simulate ${SIM_FLAGS}
+fi
 
 echo "Job finished at $(date)"
