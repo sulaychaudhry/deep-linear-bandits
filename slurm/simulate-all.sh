@@ -8,7 +8,7 @@ LOG_DIR="${DLB_DIR}/slurm/logs"
 mkdir -p $LOG_DIR # If doesn't exist
 
 PARALLEL_SEEDS=false
-SEED_COUNT=1
+SEED_COUNT=10
 COMMON="--rounds 10000 --seed 117 --seed-count ${SEED_COUNT}"
 
 NAMES=()
@@ -88,15 +88,6 @@ for i in "${!NAMES[@]}"; do
            --export=ALL,SIM_FLAGS="${flags}" \
            "${SBATCH_SCRIPT}"
     fi
-
-
-    flags="--save-name ${name} ${COMMON} ${FLAGS[$i]}"
-    echo "Submitting sim-${name}: ${flags}"
-    sbatch --job-name="sim-${name}" \
-           --output="${LOG_DIR}/sim_${name}_%j.out" \
-           --error="${LOG_DIR}/sim_${name}__%j.err" \
-           --export=ALL,SIM_FLAGS="${flags}" \
-           "${SBATCH_SCRIPT}"
 done
 
 echo "All jobs submitted."
