@@ -626,24 +626,17 @@ def simulate(
     small_matrix = dlb_data.KRSmall(DATA_DIR, watch_threshold)
     item_popularity = dlb_data.compute_item_popularity(DATA_DIR, small_matrix.unique_item_ids, watch_threshold)
 
-    # Build context vectors in inference mode (much faster, gradient calculations not needed)
-    print(f"Building context vectors (hadamard={hadamard})...")
+    # Embed small users & items in inference mode (much faster, no gradient needed)
+    # Context vectors are rebuilt per round inside each linear policy to avoid holding the full matrix in RAM
+    print("Retrieving embeddings for users & items...")
     with torch.inference_mode():
-        user_embeddings = model.user_tower(*small_matrix.tower_ready_users(device))
-        item_embeddings = model.item_tower(*small_matrix.tower_ready_items(device))
-        contexts = dlb_sim.build_two_tower_contexts(user_embeddings, item_embeddings, include_product=hadamard)
-
-    print(f"Context shape: {tuple(contexts.shape)} (D={contexts.shape[-1]})")
-
-    # Convert to numpy for CPU-based simulation (avoids GPU overhead in per-round loop)
-    # The work is mostly CPU-bound anyway & Batch Compute System GPU nodes are scarce
-    contexts_np = contexts.cpu().numpy()
-    user_embeddings_np = user_embeddings.cpu().numpy()
-    item_embeddings_np = item_embeddings.cpu().numpy()
+        # Move to CPU numpy for the per-round simulation loop (CPU-bound; Slurm GPU nodes scarce)
+        user_embeddings = model.user_tower(*small_matrix.tower_ready_users(device)).cpu().numpy()
+        item_embeddings = model.item_tower(*small_matrix.tower_ready_items(device)).cpu().numpy()
 
     # Create simulator & run
     print("\nRunning the simulator...")
-    simulator = dlb_sim.Simulator(small_matrix, contexts_np, user_embeddings_np, item_embeddings_np)
+    simulator = dlb_sim.Simulator(small_matrix, user_embeddings, item_embeddings, hadamard=hadamard)
     results = simulator.run(
         seed_count=seed_count,
         rounds=rounds,

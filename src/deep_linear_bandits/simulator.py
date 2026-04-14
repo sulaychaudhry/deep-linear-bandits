@@ -1,5 +1,4 @@
 import numpy as np
-import torch
 from deep_linear_bandits.data import KRSmall
 from tqdm import trange
 
@@ -197,34 +196,26 @@ def build_policy_labels(
         + [f"TS (ʋ={v})"       for v in ts_vs]
     )
 
-def build_two_tower_contexts(
-        user_embeddings: torch.Tensor,  # (U, D)
-        item_embeddings: torch.Tensor,  # (I, D)
-        include_product: bool = True
-) -> torch.Tensor:
+def _build_user_contexts(
+        user_emb: np.ndarray, # (D,)
+        item_embs: np.ndarray, # (I, D)
+        hadamard: bool
+) -> np.ndarray:
     """
-    Build context vectors from two-tower embeddings.
+    For a given user embedding `user_emb` and many item embeddings `item_embs`,
+    this computes all context vectors for the bandits.
 
-    Constructs (U, I, D_ctx) context tensors by concatenating:
-        1. user embedding repeated across items    (U, I, D)
-        2. item embedding repeated across users    (U, I, D)
+    If `hadamard`==True:
+        [user emb | item emb | user-item Hadamard]
+    If `hadamard`==False:
+        [user_emb | item_emb]
 
-        (if include_product=True)
-        3. element-wise product i.e. Hadamard      (U, I, D)
-
-    A given user-item context vector ends with size D_ctx = 2*D if no Hadamard, else D_ctx = 3*D.
+    where [... | ...] denotes concatenation
     """
 
-    # Precompute all context vectors across all users and all items; this is large (over 3GB) but will fit in VRAM
-    u = user_embeddings.unsqueeze(1)  # (U, 1, D)
-    i = item_embeddings.unsqueeze(0)  # (1, I, D)
-    parts = [
-        u.expand(-1, item_embeddings.shape[0], -1),  # (U, I, D)
-        i.expand(user_embeddings.shape[0], -1, -1),  # (U, I, D)
-    ]
-    if include_product:
-        parts.append(u * i)  # (U, I, D) via broadcasting
-    return torch.cat(parts, dim=-1)  # (U, I, D_ctx)
+    u = np.broadcast_to(user_emb, item_embs.shape) # (I, D) of user emb broadcasted for all items
+    parts = [u, item_embs, (u * item_embs)] if hadamard else [u, item_embs]
+    return np.concatenate(parts, axis=1) # (I, D*3 if Hadamard else D*2)
 
 class GreedyPolicy:
     def __init__(
@@ -278,28 +269,37 @@ class RandomPolicy:
 class LinUCB:
     def __init__(
             self,
-            contexts: np.ndarray,      # (1411, 3327, D)
-            available: np.ndarray,     # (1411, 3327)
+            user_embeddings: np.ndarray,  # (1411, D)
+            item_embeddings: np.ndarray,  # (3327, D)
+            hadamard: bool,               # whether to append Hadamard term to context vectors
+            available: np.ndarray,        # (1411, 3327)
 
-            alpha: float = 0.5,        # Exploration bonus
-            lam: float = 1.0           # Ridge regularisation penalty (weight decay)
+            alpha: float = 0.5,           # Exploration bonus
+            lam: float = 1.0              # Ridge regularisation penalty (weight decay)
     ):
-        self.contexts = contexts
+        self.user_embeddings = user_embeddings
+        self.item_embeddings = item_embeddings
+        self.hadamard = hadamard
         self.available = available.copy() # Needs copying so that it can be modified
         self.alpha = alpha
 
+        # Context dim: concat of user & item (each D) plus optional Hadamard (D)
+        D_ctx = user_embeddings.shape[1] * (3 if hadamard else 2)
+
         # Set up A_inv, which starts as (1 / lambda) * I
-        self.A_inv = np.eye(contexts.shape[-1]) / lam  # (D, D)
+        self.A_inv = np.eye(D_ctx) / lam  # (D_ctx, D_ctx)
 
         # Set up b, which starts as 0
-        self.b = np.zeros(contexts.shape[-1])           # (D,)
+        self.b = np.zeros(D_ctx)          # (D_ctx,)
 
     def recommend(self, user_id: int) -> int:
         # Compute (theta = A_inv @ b) where theta is the current best estimate of the linear weights
-        theta = self.A_inv @ self.b # (D,)
+        theta = self.A_inv @ self.b # (D_ctx,)
 
-        # Retrieve the context vectors (Psi) for this user
-        Psi = self.contexts[user_id] # (3327, D)
+        # Build the context vectors (Psi) for this user
+        Psi = _build_user_contexts(
+            self.user_embeddings[user_id], self.item_embeddings, self.hadamard
+        ) # (3327, D_ctx)
 
         # Reward estimates are (Psi @ theta) to apply weights across all contexts
         rewards = Psi @ theta
@@ -332,8 +332,12 @@ class LinUCB:
             item_id: int,
             reward: bool
     ):
-        # Get feature vector (psi) for this specific user-item pair
-        psi = self.contexts[user_id, item_id] # (D,)
+        # Build feature vector (psi) for this specific user-item pair
+        u = self.user_embeddings[user_id]
+        i = self.item_embeddings[item_id]
+        psi = np.concatenate(
+            [u, i, u * i] if self.hadamard else [u, i]
+        )
 
         # Update A_inv using Sherman-Morrison
         # (A + psi psi^T)_inv = A_inv - (A_inv psi psi^T A_inv) / (1 + psi^T A_inv psi)
@@ -347,7 +351,9 @@ class LinUCB:
 class EpsilonGreedy:
     def __init__(
             self,
-            contexts: np.ndarray,           # (1411, 3327, D)
+            user_embeddings: np.ndarray,    # (1411, D)
+            item_embeddings: np.ndarray,    # (3327, D)
+            hadamard: bool,                 # whether to append Hadamard term to context vectors
             available: np.ndarray,          # (1411, 3327)
 
             rng: np.random.Generator,       # RNG instance
@@ -355,14 +361,17 @@ class EpsilonGreedy:
             epsilon: float = 0.1,           # Random exploration probability
             lam: float = 1.0                # Ridge regularisation penalty (weight decay)
     ):
-        self.contexts = contexts
+        self.user_embeddings = user_embeddings
+        self.item_embeddings = item_embeddings
+        self.hadamard = hadamard
         self.available = available.copy() # Needs copying so that it can be modified
         self.epsilon = epsilon
         self.rng = rng
 
         # Set up posteriors (same as LinUCB, TS)
-        self.A_inv = np.eye(contexts.shape[-1]) / lam  # (D, D)
-        self.b = np.zeros(contexts.shape[-1])           # (D,)
+        D_ctx = user_embeddings.shape[1] * (3 if hadamard else 2)
+        self.A_inv = np.eye(D_ctx) / lam  # (D_ctx, D_ctx)
+        self.b = np.zeros(D_ctx)          # (D_ctx,)
 
     def recommend(self, user_id:int) -> int:
         available = self.available[user_id]
@@ -376,9 +385,11 @@ class EpsilonGreedy:
         else:
             # Exploitation: pick item with highest estimated reward (wrt the linear regression)
 
-            # Calculate weight estimates & contexts; then apply weights to all contexts to get scores
-            theta = self.A_inv @ self.b # (D,)
-            Psi = self.contexts[user_id] # (3327, D)
+            # Calculate weight estimates & build contexts; then apply weights to score all contexts
+            theta = self.A_inv @ self.b # (D_ctx,)
+            Psi = _build_user_contexts(
+                self.user_embeddings[user_id], self.item_embeddings, self.hadamard
+            ) # (3327, D_ctx)
             scores = Psi @ theta
 
             # Masking out unavailable items before picking one
@@ -394,8 +405,12 @@ class EpsilonGreedy:
     def update(self, user_id:int, item_id:int, reward:int):
         # Same as LinUCB: update A_inv and b
 
-        # Retrieve context vector for this user-item pair
-        psi = self.contexts[user_id, item_id] # (D,)
+        # Build context vector (psi) for this user-item pair
+        u = self.user_embeddings[user_id]
+        i = self.item_embeddings[item_id]
+        psi = np.concatenate(
+            [u, i, u * i] if self.hadamard else [u, i]
+        ) # (D_ctx,)
 
         # Update A_inv using Sherman-Morrison
         C = self.A_inv @ psi
@@ -407,29 +422,36 @@ class EpsilonGreedy:
 class ThompsonSampling:
     def __init__(
             self,
-            contexts: np.ndarray,      # (1411, 3327, D)
-            available: np.ndarray,     # (1411, 3327)
+            user_embeddings: np.ndarray,  # (1411, D)
+            item_embeddings: np.ndarray,  # (3327, D)
+            hadamard: bool,               # whether to append Hadamard term to context vectors
+            available: np.ndarray,        # (1411, 3327)
 
-            rng: np.random.Generator,  # RNG instance (for reproducible posterior sampling)
+            rng: np.random.Generator,     # RNG instance (for reproducible posterior sampling)
 
-            v: float = 1.0,            # Posterior variance scale (higher increases distribution spread, exploration)
+            v: float = 1.0,               # Posterior variance scale (higher increases distribution spread, exploration)
             lam: float = 1.0
     ):
-        self.contexts = contexts
+        self.user_embeddings = user_embeddings
+        self.item_embeddings = item_embeddings
+        self.hadamard = hadamard
         self.available = available.copy() # Needs copying so that it can be modified
         self.rng = rng
         self.v = v
 
         # Set up posteriors (same as LinUCB, EpsilonGreedy)
-        self.A_inv = np.eye(contexts.shape[-1]) / lam  # (D, D)
-        self.b = np.zeros(contexts.shape[-1])           # (D,)
+        D_ctx = user_embeddings.shape[1] * (3 if hadamard else 2)
+        self.A_inv = np.eye(D_ctx) / lam  # (D_ctx, D_ctx)
+        self.b = np.zeros(D_ctx)          # (D_ctx,)
 
     def recommend(self, user_id: int) -> int:
         # Compute (theta = A_inv @ b) where theta is the current best estimate of the linear weights
-        theta = self.A_inv @ self.b # (D,)
+        theta = self.A_inv @ self.b # (D_ctx,)
 
-        # Retrieve the context vectors (Psi) for this user
-        Psi = self.contexts[user_id] # (3327, D)
+        # Build the context vectors (Psi) for this user
+        Psi = _build_user_contexts(
+            self.user_embeddings[user_id], self.item_embeddings, self.hadamard
+        ) # (3327, D_ctx)
 
         # Thompson Sampling samples its ts_theta from:
         #       ts_theta ~ N(theta, v^2 A_inv)
@@ -471,8 +493,12 @@ class ThompsonSampling:
             item_id: int,
             reward: bool
     ):
-        # Get feature vector (psi) for this specific user-item pair
-        psi = self.contexts[user_id, item_id] # (D,)
+        # Build feature vector (psi) for this specific user-item pair on demand
+        u = self.user_embeddings[user_id]
+        i = self.item_embeddings[item_id]
+        psi = np.concatenate(
+            [u, i, u * i] if self.hadamard else [u, i]
+        )
 
         # Update A_inv using Sherman-Morrison
         C = self.A_inv @ psi
@@ -485,11 +511,14 @@ class Simulator:
     def __init__(
             self,
             small_matrix: KRSmall,
-            contexts: np.ndarray,
             user_embeddings: np.ndarray,
-            item_embeddings: np.ndarray
+            item_embeddings: np.ndarray,
+            hadamard: bool
     ):
-        self.contexts = contexts
+        # Context vectors will be built on the fly as needed otherwise they are massive in RAM
+        self.user_embeddings = user_embeddings
+        self.item_embeddings = item_embeddings
+        self.hadamard = hadamard
 
         # Compute a matrix to indicate all interactions that are 'valid' i.e. don't need masking out
         # This is because despite 99.7% density, some interactions are missing
@@ -528,15 +557,19 @@ class Simulator:
         }
         for i, eps in enumerate(e_greedy_epsilons):
             policies[f"ε-greedy (ε={eps})"] = EpsilonGreedy(
-                self.contexts, self.available, policy_rngs[1 + i], epsilon=eps, lam=lam
+                self.user_embeddings, self.item_embeddings, self.hadamard,
+                self.available, rng=policy_rngs[1 + i], epsilon=eps, lam=lam
             )
         for alpha in linucb_alphas:
             policies[f"LinUCB (α={alpha})"] = LinUCB(
-                self.contexts, self.available, alpha=alpha, lam=lam
+                self.user_embeddings, self.item_embeddings, self.hadamard,
+                self.available, alpha=alpha, lam=lam
             )
         for i, v in enumerate(ts_vs):
             policies[f"TS (ʋ={v})"] = ThompsonSampling(
-                self.contexts, self.available, policy_rngs[1 + len(e_greedy_epsilons) + i], v=v, lam=lam
+                self.user_embeddings, self.item_embeddings, self.hadamard,
+                self.available, rng=policy_rngs[1 + len(e_greedy_epsilons) + i], 
+                v=v, lam=lam
             )
 
         # Calculate the oracle: how many positives exist per user?
