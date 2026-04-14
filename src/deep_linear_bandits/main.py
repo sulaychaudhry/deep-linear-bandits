@@ -636,7 +636,7 @@ def simulate(
 
     # Create simulator & run
     print("\nRunning the simulator...")
-    simulator = dlb_sim.Simulator(small_matrix, user_embeddings, item_embeddings, hadamard=hadamard)
+    simulator = dlb_sim.Simulator(small_matrix, user_embeddings, item_embeddings, hadamard, item_popularity)
     results = simulator.run(
         seed_count=seed_count,
         rounds=rounds,

@@ -7,7 +7,7 @@ POLICY_FAMILIES = [
     ("LinUCB",   "Oranges", "alpha",   "α"),
     ("TS",       "Greens",  "ts_v",    "ʋ"),
 ]
-BASELINES = [("Greedy", "#444444"), ("Random", "#aaaaaa")]
+BASELINES = [("Greedy", "#444444"), ("Random", "#aaaaaa"), ("Popularity", "#9b30d9")]
 
 def _get_family_colours(n: int, cmap_name: str) -> list:
     """

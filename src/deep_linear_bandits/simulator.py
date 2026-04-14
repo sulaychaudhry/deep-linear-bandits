@@ -190,7 +190,7 @@ def build_policy_labels(
     ts_vs: list[float]
 ) -> list[str]:
     return (
-        ["Greedy", "Random"]
+        ["Greedy", "Random", "Popularity"]
         + [f"ε-greedy (ε={e})" for e in e_greedy_epsilons]
         + [f"LinUCB (α={a})"   for a in linucb_alphas]
         + [f"TS (ʋ={v})"       for v in ts_vs]
@@ -263,8 +263,33 @@ class RandomPolicy:
         self.available[user_id, item_id] = False
 
         return item_id
-    
+
     def update(self, user_id:int, item_id:int, reward:int): pass
+
+class PopularityBaseline:
+    def __init__(
+            self,
+            popular_items: np.ndarray,  # (n_items,) item IDs sorted by global popularity desc
+            available: np.ndarray       # (1411, 3327)
+    ):
+        # Pre-sorted item IDs (same order for every user, unlike GreedyPolicy's per-user sort)
+        self.popular_items = popular_items
+
+        # Per-user pointer into popular_items; advances past already-recommended items
+        self.user_next = np.zeros((SMALL_USERS,), dtype=int)
+
+        # Reference only (no copy needed) - just for tracking valid recommendationss
+        self.available = available
+
+    def recommend(self, user_id: int) -> int:
+        # Look for an available item to serve the user
+        for i in range(self.user_next[user_id], SMALL_ITEMS):
+            item_id = self.popular_items[i]
+            if self.available[user_id, item_id]:
+                self.user_next[user_id] = i + 1
+                return item_id
+
+    def update(self, user_id: int, item_id: int, reward: int): pass
 
 class LinUCB:
     def __init__(
@@ -513,7 +538,8 @@ class Simulator:
             small_matrix: KRSmall,
             user_embeddings: np.ndarray,
             item_embeddings: np.ndarray,
-            hadamard: bool
+            hadamard: bool,
+            item_popularity: np.ndarray  # (n_items,) global popularity counts for each small-matrix item
     ):
         # Context vectors will be built on the fly as needed otherwise they are massive in RAM
         self.user_embeddings = user_embeddings
@@ -534,6 +560,9 @@ class Simulator:
         dot_products = user_embeddings @ item_embeddings.T
         self.greedy_items = np.argsort(-dot_products, axis=1)
 
+        # Precompute item IDs sorted by global popularity descending for PopularityBaseline
+        self.popular_items = np.argsort(-item_popularity)
+
     def _run_one_seed(
             self,
             simulation_num: int,
@@ -552,8 +581,9 @@ class Simulator:
 
         # Set up policies
         policies = {
-            "Greedy": GreedyPolicy(self.greedy_items, self.available),
-            "Random": RandomPolicy(self.available, policy_rngs[0])
+            "Greedy":     GreedyPolicy(self.greedy_items, self.available),
+            "Random":     RandomPolicy(self.available, policy_rngs[0]),
+            "Popularity": PopularityBaseline(self.popular_items, self.available)
         }
         for i, eps in enumerate(e_greedy_epsilons):
             policies[f"ε-greedy (ε={eps})"] = EpsilonGreedy(
