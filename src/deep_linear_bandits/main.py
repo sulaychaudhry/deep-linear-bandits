@@ -279,7 +279,7 @@ def train_tt(
         print(f"    {flag_name}: {str(flag_arg)}")
 
     # Get training & validation interactions from KuaiRec-Big
-    all_intrs_train, all_intrs_val = dlb_data.preprocess_krbig_interactions(DATA_DIR, watch_threshold)
+    all_intrs_train, all_intrs_val = dlb_data.preprocess_krbig_interactions(DATA_DIR)
     pos_intrs_train = all_intrs_train[all_intrs_train["watch_ratio"] >= watch_threshold].drop(columns=["watch_ratio"])
     pos_intrs_val = all_intrs_val[all_intrs_val["watch_ratio"] >= watch_threshold].drop(columns=["watch_ratio"])
 

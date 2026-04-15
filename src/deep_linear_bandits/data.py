@@ -11,8 +11,7 @@ NUM_ITEMS = 10728
 DATA_SPLIT_SEED = 117
 
 def preprocess_krbig_interactions(
-        data_dir: str,
-        watch_threshold: float = 2.0
+        data_dir: str
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Preprocess KuaiRec-Big user-item interactions into training & validation splits.
@@ -22,7 +21,7 @@ def preprocess_krbig_interactions(
     Duplicate (user_id, video_id) pairs are resolved by keeping the max watch_ratio.
 
     The 80-20 split is per-user to avoid bias against cold users; users with fewer
-    than 3 total interactions contribute entirely to training.
+    than 5 total interactions contribute entirely to training.
 
     Returns
         all_train: all training interactions, watch_ratio retained
