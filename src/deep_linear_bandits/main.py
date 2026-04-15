@@ -147,10 +147,10 @@ def cli() -> None:
 )
 @click.option(
     '--negative-sampling',
-    type=click.Choice(('uniform', 'in-batch', 'score-weighted', 'watch-ratio')),
+    type=click.Choice(('uniform', 'in-batch', 'score-weighted', 'watch-ratio', 'full-softmax')),
     default='uniform',
     show_default=True,
-    help='Negative sampling strategy: "uniform" samples K random items per batch; "in-batch" uses other positives in the batch as negatives; "score-weighted" samples each user\'s K negatives proportional to current model scores (hard negative mining relative to model current embedding space); "watch-ratio" uses the user\'s watch ratio for a video to place it into a negative hardness band, with different bands having different sampling probabilities (hard negative mining relative to how little the user watched the video).'
+    help='Negative sampling strategy: "uniform" samples K random items per batch; "in-batch" uses other positives in the batch as negatives; "score-weighted" samples each user\'s K negatives proportional to current model scores (hard negative mining relative to model current embedding space); "watch-ratio" uses the user\'s watch ratio for a video to place it into a negative hardness band, with different bands having different sampling probabilities (hard negative mining relative to how little the user watched the video); "full-softmax" sidesteps sampled softmax & hard negative concerns, calculating the full softmax as is feasible on this catalogue, without any approximation.'
 )
 @click.option(
     '--wr-band-ratio',

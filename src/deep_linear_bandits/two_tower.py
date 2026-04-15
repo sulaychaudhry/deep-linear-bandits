@@ -555,7 +555,7 @@ def train_two_tower(
 
     epochs: int,
     num_negatives: int,
-    negative_sampling: str,             # 'uniform', 'in-batch', 'score-weighted', or 'watch-ratio'
+    negative_sampling: str,             # 'uniform', 'in-batch', 'score-weighted', 'watch-ratio', or 'full-softmax'
     score_sharpness: float,             # sharpness for score-weighted sampling: closer to 0 = uniform, higher = harder negatives
     train_wr_weights: torch.Tensor,     # (NUM_USERS, NUM_ITEMS) precomputed band weights for training
     val_wr_weights: torch.Tensor,       # (NUM_USERS, NUM_ITEMS) precomputed band weights for validation
@@ -571,6 +571,12 @@ def train_two_tower(
             - ['recall@{k}'] for all metric_ks
             - ['ndcg@{k}'] for all metric_ks
         - the best state of the passed model (by Recall@k for k=best_k)
+
+    Full softmax:
+        - What other negative sampling methods are attempting to approximate
+        - Computationally feasible to compute on KuaiRec, even if it takes longer
+        - Uses all other items as part of the cross-entropy loss calculation for each positive interaction
+        - (including other positives for the user; that's what makes the denominator valid)
 
     Score-weighted negative sampling:
         - For each batch, each user gets K negatives with probability proportional to
@@ -640,7 +646,31 @@ def train_two_tower(
         for batch in train_loader:
             optimiser.zero_grad()
 
-            if negative_sampling == 'in-batch':
+            if negative_sampling == 'full-softmax':
+                # Full softmax: each user's positive interaction also gets all other items as part of the cross-entropy calculation
+                # (doesn't try to approximate the loss, since KuaiRec is small enough to compute this)
+
+                # All users from the batch
+                user_embs = model.user_tower(
+                    batch["user_id"].to(device),
+                    batch["user_cat_feats"].to(device),
+                    batch["user_numeric_feats"].to(device)
+                )  # (B, D)
+
+                # All items
+                item_embs = model.item_tower(
+                    item_ids_t,
+                    item_categories_gpu
+                ) # (num_items, D)
+
+                # Compute all scores between the users & all items
+                # Also apply logit temp
+                logits = (user_embs @ item_embs.T) / model.logit_temp # (B, D) @ (D, num_items) -> (B, num_items)
+
+                # Now the positive for each user is the one specified from the batch, so use this for the cross-entropy target
+                target = batch["item_id"].to(device) # (B,) indices of the positive item to train on per user
+
+            elif negative_sampling == 'in-batch':
                 # In-batch negative sampling exists as a comparison point, but uniform negatives are seen to perform much better on KuaiRec
                 # TwoTower is built for uniform negatives; this simply does the work of TwoTower's forward pass manually if it was using in-batch negative sampling -> better than writing two side-by-side TwoTower implementations, esp. given that in-batch negative sampling is not used for actual high-quality results
 
@@ -660,6 +690,7 @@ def train_two_tower(
 
                 # The positive for user i is item i (on the diagonal)
                 target = torch.arange(logits.size(0), device=device)
+            
             elif negative_sampling == 'score-weighted':
                 logits, target = _score_weighted_obj(
                     model,
@@ -671,6 +702,7 @@ def train_two_tower(
                     train_pos_mask, num_negatives,
                     score_sharpness, device
                 )
+            
             elif negative_sampling == 'watch-ratio':
                 logits, target = _watch_ratio_weighted_obj(
                     model,
@@ -681,6 +713,7 @@ def train_two_tower(
                     item_ids_t, item_categories_gpu,
                     train_wr_weights, num_negatives, device
                 )
+            
             else:
                 # Uniform negative sampling: sample K random items shared across the batch
                 neg_item_ids = torch.randint(
@@ -722,7 +755,27 @@ def train_two_tower(
         val_loss = 0
         with torch.no_grad(): # Not training so don't compute gradients for backprop
             for batch in val_loader:
-                if negative_sampling == 'in-batch':
+                if negative_sampling == 'full-softmax':
+                    # Same approach as in training
+
+                    # Get user embs for the positive interactions to train on + all items for the full softmax loss
+                    user_embs = model.user_tower(
+                        batch["user_id"].to(device),
+                        batch["user_cat_feats"].to(device),
+                        batch["user_numeric_feats"].to(device)
+                    )  # (B, D)
+                    item_embs = model.item_tower(
+                        item_ids_t,
+                        item_categories_gpu
+                    ) # (num_items, D)
+
+                    # Compute all logits
+                    logits = (user_embs @ item_embs.T) / model.logit_temp # (B, num_items)
+
+                    # Positive for each user is the one specified in the batch
+                    target = batch["item_id"].to(device) # (B,) indices of the positive item to train on per user
+
+                elif negative_sampling == 'in-batch':
                     # In-batch: validation positives act as negatives for each other
                     user_embs = model.user_tower(
                         batch["user_id"].to(device),
