@@ -2,7 +2,7 @@
 #
 #SBATCH --partition=tiger
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=2
 #SBATCH --mem=2000
 #SBATCH --time=0-00:30:00
 

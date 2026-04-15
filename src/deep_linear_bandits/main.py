@@ -175,6 +175,13 @@ def cli() -> None:
     help='Learning rate for the optimiser used to train the model.'
 )
 @click.option(
+    '--weight-decay',
+    type=click.FloatRange(min=0.0),
+    default=0.00,
+    show_default=True,
+    help='Weight decay for the optimiser used to train the model; if using a weight_decay > 0.0, it is recommended to use AdamW as Adam is shown to update incorrectly with weight decay. The recommended starting point for weight_decay is 0.01.'
+)
+@click.option(
     '--optimiser',
     type=click.Choice(('adam', 'adamw')),
     default='adam',
@@ -244,6 +251,7 @@ def train_tt(
     wr_band_ratio: tuple[float, ...],
     score_sharpness: float,
     lr: float,
+    weight_decay: float,
     optimiser: str,
     data_workers: int,
     id_emb_dims: int,
@@ -421,9 +429,9 @@ def train_tt(
         train_wr_weights=train_wr_weights,
         val_wr_weights=val_wr_weights,
         optimiser=(
-            torch.optim.Adam(model.parameters(), lr=lr)
+            torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
             if optimiser=='adam' else
-            torch.optim.AdamW(model.parameters(), lr=lr)
+            torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
         )
     )
 

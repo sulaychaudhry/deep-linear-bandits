@@ -3,7 +3,7 @@
 #SBATCH --partition=tiger
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=5000
+#SBATCH --mem=2000
 #SBATCH --time=2-00:00:00
 
 echo -e "Starting job at $(date)\n"

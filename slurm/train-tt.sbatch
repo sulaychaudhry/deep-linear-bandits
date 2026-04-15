@@ -5,8 +5,6 @@
 #SBATCH --cpus-per-task=12
 #SBATCH --gres=gpu:1
 #SBATCH --time=2-00:00:00
-#
-#SBATCH --mail-type=END,FAIL,TIME_LIMIT_80
 
 ## Note that --output, --error, TT_FLAGS are set by `./train-all-tts.sh`
 
