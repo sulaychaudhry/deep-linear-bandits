@@ -138,7 +138,7 @@ def build_wr_weight_matrix(
 
 def compute_item_popularity(
     data_dir: str,
-    unique_item_ids: np.ndarray,
+    unique_item_ids: np.ndarray = np.arange(0, NUM_ITEMS),
     watch_threshold: float = 2.0,
     popularity_mode: str = 'binary'
 ) -> np.ndarray:
