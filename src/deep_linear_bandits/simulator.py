@@ -539,21 +539,28 @@ class Simulator:
             user_embeddings: np.ndarray,
             item_embeddings: np.ndarray,
             hadamard: bool,
-            item_popularity: np.ndarray  # (n_items,) global popularity counts for each small-matrix item
+            item_popularity: np.ndarray, # (n_items,) global popularity counts for each small-matrix item
+            continuous_reward: bool,     # if True, bandits use continuous watch_ratio; else binary (>= watch_threshold)
+            watch_threshold: float       # only used when continuous_reward is False
     ):
         # Context vectors will be built on the fly as needed otherwise they are massive in RAM
         self.user_embeddings = user_embeddings
         self.item_embeddings = item_embeddings
         self.hadamard = hadamard
+        self.continuous_reward = continuous_reward
 
         # Compute a matrix to indicate all interactions that are 'valid' i.e. don't need masking out
         # This is because despite 99.7% density, some interactions are missing
         self.available = np.zeros((SMALL_USERS, SMALL_ITEMS), dtype=bool)
         self.available[small_matrix.intr_new_uids, small_matrix.intr_new_iids] = True
 
-        # Also compute a ground truth reward matrix for all positive user-item interactions
-        self.rewards = np.zeros((SMALL_USERS, SMALL_ITEMS), dtype=bool)
-        self.rewards[small_matrix.intr_new_uids, small_matrix.intr_new_iids] = small_matrix.intr_signals
+        # Build ground truth reward matrix from raw watch_ratio interactions
+        watch_matrix = np.zeros((SMALL_USERS, SMALL_ITEMS), dtype=np.float32)
+        watch_matrix[small_matrix.intr_new_uids, small_matrix.intr_new_iids] = small_matrix.intr_watch_ratios
+        if continuous_reward:
+            self.rewards = watch_matrix
+        else:
+            self.rewards = watch_matrix >= watch_threshold
 
         # Precompute dot-product similarity scores for GreedyPolicy
         # This can be used immediately to derive the item IDs for GreedyPolicy as it has fixed behaviour
@@ -602,13 +609,21 @@ class Simulator:
                 v=v, lam=lam
             )
 
-        # Calculate the oracle: how many positives exist per user?
-        pos_count = self.rewards.sum(axis=1)
-        pos_count = np.tile(pos_count, (len(policies), 1)) # Separate oracle copy for each policy to update
+        # Per-policy oracle state for regret
+        if self.continuous_reward:
+            # Continuous mode: need to know which items are still available via mask, then can take max after
+            remaining = np.broadcast_to(
+                self.available[None], # Add extra axis -> (1, user_count, item_count)
+                (len(policies), SMALL_USERS, SMALL_ITEMS) # -> (policy_count, user_count, item_count)
+            ).copy()
+        else:
+            # Binary mode: just need to know how many positives remain
+            pos_count = np.tile(self.rewards.sum(axis=1), (len(policies), 1)) # Separate oracle copy for each policy to update
 
         # Simulate rounds
-        rewards = np.empty((len(policies), rounds), dtype=bool)
-        regrets = np.empty((len(policies), rounds), dtype=bool)
+        reward_dtype = np.float32 if self.continuous_reward else bool
+        rewards = np.empty((len(policies), rounds), dtype=reward_dtype)
+        regrets = np.empty((len(policies), rounds), dtype=reward_dtype)
         recommendations = np.empty((len(policies), rounds), dtype=np.int16)
         for round in trange(rounds, desc=f"Simulation {simulation_num}"):
             # Retrieve the random user for this round
@@ -616,8 +631,11 @@ class Simulator:
 
             # Simulate policies & record rewards
             for i, policy in enumerate(policies.values()):
-                # Check oracle for this policy: is a reward achievable?
-                oracle_reward = pos_count[i, user_id] > 0
+                # Oracle: best reward still achievable by this policy for this user
+                if self.continuous_reward:
+                    oracle_reward = (self.rewards[user_id] * remaining[i, user_id]).max()
+                else:
+                    oracle_reward = pos_count[i, user_id] > 0
 
                 # Policy chooses item, observe its reward
                 item_rec = policy.recommend(user_id)
@@ -625,11 +643,13 @@ class Simulator:
 
                 # Record reward, regret, and recommendation
                 rewards[i, round] = reward
-                regrets[i, round] = oracle_reward and not reward # Reward available but not achieved
+                if self.continuous_reward:
+                    regrets[i, round] = oracle_reward - reward # Regret is (best reward available - reward attained)
+                    remaining[i, user_id, item_rec] = False    # Policy item consumed, won't contribute to oracle
+                else:
+                    regrets[i, round] = oracle_reward and not reward # Reward available but not achieved
+                    if reward: pos_count[i, user_id] -= 1 # Update oracle positive count if positive item used by policy
                 recommendations[i, round] = item_rec
-
-                # Update oracle
-                if reward: pos_count[i, user_id] -= 1
 
                 # Update policy (allow bandits to update their ridge regression)
                 policy.update(user_id, item_rec, reward)

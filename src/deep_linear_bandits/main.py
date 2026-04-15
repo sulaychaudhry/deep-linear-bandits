@@ -469,6 +469,19 @@ def train_tt(
     help='Include/exclude the element-wise (Hadamard) product of user & item embeddings in context vectors.'
 )
 @click.option(
+    '--continuous-reward/--binary-reward',
+    'continuous_reward',
+    default=True,
+    show_default=True,
+    help='Use raw watch_ratio as the bandit reward signal instead of binarising via --watch-threshold.'
+)
+@click.option(
+    '--popularity-mode',
+    type=click.Choice(['binary', 'continuous']),
+    default=None,
+    help='How item popularity is computed for long-tail coverage & ARP. If omitted, defaults to "continuous" when --continuous-reward is set, else "binary".'
+)
+@click.option(
     '--watch-threshold',
     type=click.FloatRange(0.0, 5.0),
     default=None,
@@ -549,6 +562,8 @@ def simulate(
     save_name: str,
     model_name: str,
     hadamard: bool,
+    continuous_reward: bool,
+    popularity_mode: str | None,
     watch_threshold: float | None,
     epsilon: tuple[float, ...],
     alpha: tuple[float, ...],
@@ -584,6 +599,11 @@ def simulate(
         watch_threshold = model_flags['watch_threshold']
         print(f"Using watch_threshold={watch_threshold} from model's flags.json, as none specified.")
         flags['watch_threshold'] = watch_threshold # Update this to be reflected in flags.json correctly
+
+    # Resolve --popularity-mode default based on --continuous-reward when not specified
+    if popularity_mode is None:
+        popularity_mode = 'continuous' if continuous_reward else 'binary'
+        flags['popularity_mode'] = popularity_mode
 
     # Set up output directory
     path = DLB_DIR + f'simulations/{save_name}/'
@@ -622,9 +642,9 @@ def simulate(
     model.eval()
     print(f"\nLoaded two-tower model from {model_path}")
 
-    print(f"\nLoading KuaiRec-Small (watch_threshold={watch_threshold})...")
-    small_matrix = dlb_data.KRSmall(DATA_DIR, watch_threshold)
-    item_popularity = dlb_data.compute_item_popularity(DATA_DIR, small_matrix.unique_item_ids, watch_threshold)
+    print("\nLoading KuaiRec-Small...")
+    small_matrix = dlb_data.KRSmall(DATA_DIR)
+    item_popularity = dlb_data.compute_item_popularity(DATA_DIR, small_matrix.unique_item_ids, watch_threshold, popularity_mode)
 
     # Embed small users & items in inference mode (much faster, no gradient needed)
     # Context vectors are rebuilt per round inside each linear policy to avoid holding the full matrix in RAM
@@ -636,7 +656,10 @@ def simulate(
 
     # Create simulator & run
     print("\nRunning the simulator...")
-    simulator = dlb_sim.Simulator(small_matrix, user_embeddings, item_embeddings, hadamard, item_popularity)
+    simulator = dlb_sim.Simulator(
+        small_matrix, user_embeddings, item_embeddings, hadamard, 
+        item_popularity, continuous_reward, watch_threshold
+    )
     results = simulator.run(
         seed_count=seed_count,
         rounds=rounds,

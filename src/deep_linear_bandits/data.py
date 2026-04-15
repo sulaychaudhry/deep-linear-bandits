@@ -140,14 +140,17 @@ def build_wr_weight_matrix(
 def compute_item_popularity(
     data_dir: str,
     unique_item_ids: np.ndarray,
-    watch_threshold: float = 2.0
+    watch_threshold: float = 2.0,
+    popularity_mode: str = 'binary'
 ) -> np.ndarray:
     """
-    Compute popularity of each small matrix item as its positive interaction frequency in the big matrix
-    (with same preprocessing that two-tower applies for consistency of evaluation).
+    Compute per-item big matrix popularities for all `unique_item_ids` passed,
+    returned as a zero-filled item array s.t. you can index by the item IDs.
 
-    Returns
-        popularity: NumPy array of all positive interaction counts for small matrix items passed
+    If `popularity_mode`=='binary':
+        uses count of user-item pairs with watch_ratio >= watch_threshold
+    If `popularity_mode`==`continuous`:
+        uses the sum of per-user max watch_ratio for each item
     """
 
     # Re-read big matrix as the `simulate` CLI path doesn't necessarily need a big matrix read otherwise
@@ -155,15 +158,22 @@ def compute_item_popularity(
         data_dir + "big_matrix.csv",
         usecols=["user_id", "video_id", "watch_ratio"]
     )
-    bm = (
-        bm[bm["watch_ratio"] >= watch_threshold]
-        .drop(columns=["watch_ratio"])
-        .drop_duplicates()
-    )
-    counts = bm["video_id"].value_counts()
 
-    # Reindex gets the counts just for the small matrix items & in its order, set up ready for actual item ID indexing
-    return counts.reindex(unique_item_ids, fill_value=0).to_numpy(dtype=np.float64)
+    # Get popularities across the entire big matrix
+    if popularity_mode == 'binary':
+        bm = (
+            bm[bm["watch_ratio"] >= watch_threshold]
+            .drop(columns=["watch_ratio"])
+            .drop_duplicates()
+        )
+        per_item = bm["video_id"].value_counts()
+    else:
+        per_user_item = bm.groupby(["user_id", "video_id"], sort=False)["watch_ratio"].max()
+        per_item = per_user_item.groupby("video_id").sum()
+
+    # Only keep `unique_item_ids` that were passed, the rest are 0; since it's the whole matrix
+    # you can still index by the unique item ids
+    return per_item.reindex(unique_item_ids, fill_value=0).to_numpy(dtype=np.float64)
 
 def preprocess_item_categories(
     data_dir: str
@@ -374,11 +384,10 @@ class KRBig(Dataset):
 class KRSmall:
     def __init__(
             self,
-            data_dir: str,
-            watch_threshold: float = 2.0
+            data_dir: str
         ):
         self.data_dir = data_dir
-        
+
         # Load in the data using Pandas
         krs_df = pd.read_csv(
             data_dir + "small_matrix.csv",
@@ -388,7 +397,7 @@ class KRSmall:
         # Convert stored interactions to NumPy arrays
         self.intr_user_ids = krs_df["user_id"].to_numpy()
         self.intr_item_ids = krs_df["video_id"].to_numpy()
-        self.intr_signals = (krs_df["watch_ratio"] >= watch_threshold).to_numpy()
+        self.intr_watch_ratios = krs_df["watch_ratio"].to_numpy(dtype=np.float32)
 
         # Store unique user & item IDs as they will be used often
         # Also store the inverse mappings (the interactions but using the new indices of the user & item matrices)
