@@ -55,5 +55,13 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "ipykernel>=7.2.0",
     "notebook>=7.5.3",
 ]
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+
+[tool.ty.environment]
+python = "./.venv"
