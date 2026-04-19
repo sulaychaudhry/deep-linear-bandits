@@ -80,7 +80,7 @@ for i in "${!NAMES[@]}"; do
             sbatch --parsable \
                 --job-name="sim-${name}" \
                 --output="${LOG_DIR}/sim_${name}_%j.out" \
-                --error="${LOG_DIR}/sim_${name}__%j.err" \
+                --error="${LOG_DIR}/sim_${name}_%j.err" \
                 --export=ALL,SIM_FLAGS="${flags}" \
                 --array=0-$((SEED_COUNT-1)) \
                 "${SIM_SCRIPT}" \
@@ -90,13 +90,13 @@ for i in "${!NAMES[@]}"; do
         sbatch --job-name="col-${name}"  \
             --dependency=afterok:$JOB_ID \
             --output="${LOG_DIR}/col_${name}_%j.out" \
-            --error="${LOG_DIR}/col_${name}__%j.err" \
+            --error="${LOG_DIR}/col_${name}_%j.err" \
             --export=ALL,SAVE_NAME="${name}" \
             "${COL_SCRIPT}"
     else
         sbatch --job-name="sim-${name}" \
            --output="${LOG_DIR}/sim_${name}_%j.out" \
-           --error="${LOG_DIR}/sim_${name}__%j.err" \
+           --error="${LOG_DIR}/sim_${name}_%j.err" \
            --export=ALL,SIM_FLAGS="${flags}" \
            "${SIM_SCRIPT}"
     fi
