@@ -604,6 +604,7 @@ def train_two_tower(
     epochs: int,
     num_negatives: int,
     negative_sampling: str,             # 'uniform', 'in-batch', 'score-weighted', 'watch-ratio', or 'full-softmax'
+    weighted_loss: bool,                # whether to use watch_ratio for weighting loss contributions
 
     train_pop: torch.Tensor,            # Popularity matrix known at training
     val_pop: torch.Tensor,              # Popularity matrix known at validation
@@ -652,7 +653,8 @@ def train_two_tower(
     best_weights = deepcopy(model.state_dict())
 
     # Use CrossEntropyLoss as the training objective
-    loss_fn = nn.CrossEntropyLoss()
+    # Use 'none' reduction to allow optional per-subloss weighting
+    loss_fn = nn.CrossEntropyLoss(reduction='none')
 
     # The item categories should be on the GPU for quick negative item sampling (they take up
     # ~1MB, negligible); make a copy for this, as the original needs to stay on the CPU for
@@ -806,7 +808,13 @@ def train_two_tower(
                     logits.size(0), dtype=torch.long, device=device
                 )
 
+            # Loss is not reduced by default, reduce based on whether using positive watch_ratio weights or not
             loss = loss_fn(logits, target)
+            if weighted_loss:
+                weights = batch["watch_ratio"].to(device)
+                loss = (loss * weights).sum() / weights.sum()
+            else:
+                loss = loss.mean()
 
             # Propagate loss backward, use optimiser to update model weights
             loss.backward()
@@ -907,7 +915,15 @@ def train_two_tower(
                         neg_item_categories=neg_item_categories
                     )
                     target = torch.zeros(logits.size(0), dtype=torch.long, device=device)
-                val_loss += loss_fn(logits, target).item()
+                
+                loss = loss_fn(logits, target)
+                if weighted_loss:
+                    weights = batch["watch_ratio"].to(device)
+                    loss = (loss * weights).sum() / weights.sum()
+                else:
+                    loss = loss.mean()
+
+                val_loss += loss.item()
             val_loss /= len(val_loader) # Track per-batch average loss
 
         # Evaluate Recall@K & NDCG@K performance on the validation set

@@ -351,6 +351,7 @@ class KRBig(Dataset):
         # copy=True to prevent PyTorch from throwing precautionary warnings about using these
         self.user_ids = positive_interactions["user_id"].to_numpy(dtype=np.int64, copy=True)
         self.item_ids = positive_interactions["video_id"].to_numpy(dtype=np.int64, copy=True)
+        self.watch_ratios = positive_interactions["watch_ratio"].to_numpy(dtype=np.float32, copy=True)
 
         self.user_cat_feats = user_cat_feats
         self.user_numeric_feats = user_numeric_feats
@@ -369,6 +370,7 @@ class KRBig(Dataset):
         return {
             "user_id": user_id,
             "item_id": item_id,
+            "watch_ratio": self.watch_ratios[idx],
             "user_cat_feats": self.user_cat_feats[user_id],
             "user_numeric_feats": self.user_numeric_feats[user_id],
             "item_categories": self.item_categories[item_id]

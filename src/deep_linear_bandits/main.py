@@ -154,6 +154,13 @@ def cli() -> None:
     help='Negative sampling strategy: "uniform" samples K random items per batch; "in-batch" uses other positives in the batch as negatives; "score-weighted" samples each user\'s K negatives proportional to current model scores (hard negative mining relative to model current embedding space); "watch-ratio" uses the user\'s watch ratio for a video to place it into a negative hardness band, with different bands having different sampling probabilities (hard negative mining relative to how little the user watched the video); "popularity" randomly samples items relative to their global popularity; "full-softmax" sidesteps sampled softmax & hard negative concerns, calculating the full softmax as is feasible on this catalogue, without any approximation.'
 )
 @click.option(
+    '--weighted-loss/--equal-loss',
+    'weighted_loss',
+    default=False,
+    show_default=True,
+    help='Whether to weight the per-interaction cross-entropy loss contribution by the continuous watch-ratio, or not.'
+)
+@click.option(
     '--popsample-coeff',
     type=click.FloatRange(min=0.0, min_open=True),
     default=1.0,
@@ -256,6 +263,7 @@ def train_tt(
     epochs: int,
     num_negatives: int,
     negative_sampling: str,
+    weighted_loss: bool,
     popsample_coeff: float,
     wr_band_ratio: tuple[float, ...],
     score_sharpness: float,
@@ -297,8 +305,8 @@ def train_tt(
 
     # Get training & validation interactions from KuaiRec-Big
     all_intrs_train, all_intrs_val = dlb_data.preprocess_krbig_interactions(DATA_DIR)
-    pos_intrs_train = all_intrs_train[all_intrs_train["watch_ratio"] >= watch_threshold].drop(columns=["watch_ratio"])
-    pos_intrs_val = all_intrs_val[all_intrs_val["watch_ratio"] >= watch_threshold].drop(columns=["watch_ratio"])
+    pos_intrs_train = all_intrs_train[all_intrs_train["watch_ratio"] >= watch_threshold]
+    pos_intrs_val = all_intrs_val[all_intrs_val["watch_ratio"] >= watch_threshold]
 
     # Get user side features: The categorical and numeric user features, alongside the size of each categorical user feature
     (user_cat_feats, user_cat_sizes), user_numeric_feats = dlb_data.preprocess_user_features(DATA_DIR)
@@ -434,6 +442,7 @@ def train_tt(
         epochs=epochs,
         num_negatives=num_negatives,
         negative_sampling=negative_sampling,
+        weighted_loss=weighted_loss,
 
         train_pop=torch.tensor(dlb_data.compute_item_popularity(
             all_intrs_train, 
