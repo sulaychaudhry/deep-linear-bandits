@@ -8,6 +8,7 @@ import math
 import pickle
 import json
 import numpy as np
+import pandas as pd
 import glob
 
 import deep_linear_bandits.data as dlb_data
@@ -147,10 +148,17 @@ def cli() -> None:
 )
 @click.option(
     '--negative-sampling',
-    type=click.Choice(('uniform', 'in-batch', 'score-weighted', 'watch-ratio', 'full-softmax')),
+    type=click.Choice(('uniform', 'in-batch', 'score-weighted', 'watch-ratio', 'popularity', 'full-softmax')),
     default='uniform',
     show_default=True,
-    help='Negative sampling strategy: "uniform" samples K random items per batch; "in-batch" uses other positives in the batch as negatives; "score-weighted" samples each user\'s K negatives proportional to current model scores (hard negative mining relative to model current embedding space); "watch-ratio" uses the user\'s watch ratio for a video to place it into a negative hardness band, with different bands having different sampling probabilities (hard negative mining relative to how little the user watched the video); "full-softmax" sidesteps sampled softmax & hard negative concerns, calculating the full softmax as is feasible on this catalogue, without any approximation.'
+    help='Negative sampling strategy: "uniform" samples K random items per batch; "in-batch" uses other positives in the batch as negatives; "score-weighted" samples each user\'s K negatives proportional to current model scores (hard negative mining relative to model current embedding space); "watch-ratio" uses the user\'s watch ratio for a video to place it into a negative hardness band, with different bands having different sampling probabilities (hard negative mining relative to how little the user watched the video); "popularity" randomly samples items relative to their global popularity; "full-softmax" sidesteps sampled softmax & hard negative concerns, calculating the full softmax as is feasible on this catalogue, without any approximation.'
+)
+@click.option(
+    '--popsample-coeff',
+    type=click.FloatRange(min=0.0, min_open=True),
+    default=1.0,
+    show_default=True,
+    help='A scaling factor to affect how heavily `--negative-sampling popularity` favours sampling the most popular items; must be greater than 0.'
 )
 @click.option(
     '--wr-band-ratio',
@@ -248,6 +256,7 @@ def train_tt(
     epochs: int,
     num_negatives: int,
     negative_sampling: str,
+    popsample_coeff: float,
     wr_band_ratio: tuple[float, ...],
     score_sharpness: float,
     lr: float,
@@ -425,6 +434,7 @@ def train_tt(
         epochs=epochs,
         num_negatives=num_negatives,
         negative_sampling=negative_sampling,
+        popsample_coeff=popsample_coeff,
         score_sharpness=score_sharpness,
         train_wr_weights=train_wr_weights,
         val_wr_weights=val_wr_weights,
@@ -650,9 +660,21 @@ def simulate(
     model.eval()
     print(f"\nLoaded two-tower model from {model_path}")
 
+    # Quickly load in the big matrix, so that it can be passed in its entirety to compute_item_popularity
+    bm = pd.read_csv(
+        DATA_DIR + "big_matrix.csv",
+        usecols=["user_id", "video_id", "watch_ratio"]
+    )
+    bm = bm.groupby(["user_id", "video_id"])["watch_ratio"].max().reset_index()
+
     print("\nLoading KuaiRec-Small...")
     small_matrix = dlb_data.KRSmall(DATA_DIR)
-    item_popularity = dlb_data.compute_item_popularity(DATA_DIR, small_matrix.unique_item_ids, watch_threshold, popularity_mode)
+    item_popularity = dlb_data.compute_item_popularity(
+        bm, 
+        small_matrix.unique_item_ids, 
+        watch_threshold, 
+        popularity_mode
+    )
 
     # Embed small users & items in inference mode (much faster, no gradient needed)
     # Context vectors are rebuilt per round inside each linear policy to avoid holding the full matrix in RAM

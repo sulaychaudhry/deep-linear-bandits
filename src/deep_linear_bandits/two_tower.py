@@ -536,6 +536,54 @@ def _watch_ratio_weighted_obj(
 
     return logits, target
 
+def _pop_weighted_obj(
+    model: TwoTower,
+    user_ids: torch.Tensor,
+    user_cat_feats: torch.Tensor,
+    user_numeric_feats: torch.Tensor,
+    pos_item_ids: torch.Tensor,
+    item_ids_t: torch.Tensor,
+    item_categories_gpu: torch.Tensor,
+    num_negatives: int,
+    pop_matrix: torch.Tensor,
+    popsample_coeff: float,
+    device: torch.device
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Compute logits & targets for a batch under popularity-weighted negative sampling.
+
+    `num_negatives` (K) random negatives are drawn for use as shared negatives for users in the batch, proportionally to their popularity in `pop_matrix` scaled by `popsample_coeff`.
+
+    Returns:
+        logits: (B, 1+K) - positive score followed by K negative scores, temperature-scaled ready for softmax cross-entropy loss
+        target: (B,)     - zeroes, since the positive is always at index 0
+    """
+
+    with torch.no_grad():
+        neg_idxs = torch.multinomial(pop_matrix * popsample_coeff, num_negatives, replacement=False)
+    
+    # Since they're shared negatives, can use the model's actual forward pass interface
+    logits = model(
+        user_ids=user_ids,
+        pos_item_ids=pos_item_ids,
+        neg_item_ids=neg_idxs,
+
+        user_cat_feats=user_cat_feats,
+        user_numeric_feats=user_numeric_feats,
+
+        pos_item_categories=item_categories_gpu[pos_item_ids],
+        neg_item_categories=item_categories_gpu[neg_idxs]
+    )
+
+    # Positive at pos 0
+    target = torch.zeros(
+        user_ids.size(0),
+        dtype=torch.long,
+        device=device
+    )
+
+    return logits, target
+
 def train_two_tower(
     model: TwoTower,
     device: torch.device,
@@ -556,6 +604,7 @@ def train_two_tower(
     epochs: int,
     num_negatives: int,
     negative_sampling: str,             # 'uniform', 'in-batch', 'score-weighted', 'watch-ratio', or 'full-softmax'
+    popsample_coeff: float,             # weighting scale for sampling items relative to their popularity
     score_sharpness: float,             # sharpness for score-weighted sampling: closer to 0 = uniform, higher = harder negatives
     train_wr_weights: torch.Tensor,     # (NUM_USERS, NUM_ITEMS) precomputed band weights for training
     val_wr_weights: torch.Tensor,       # (NUM_USERS, NUM_ITEMS) precomputed band weights for validation
@@ -631,6 +680,11 @@ def train_two_tower(
     val_pos_mask = train_pos_mask.clone()
     val_pos_mask[validation_set.user_ids, validation_set.item_ids] = True
 
+    # Retrieve most popular big matrix items (from training set data only) for popularity-weighted negative sampling
+    # TODO: train_pop and val_pop need to be retrieved
+    # train_pop = torch.tensor(dlb_data.compute_item_popularity(bm), device=device, dtype=torch.float32)
+    # val_pop = ...
+
     # Train model for multiple epochs, tracking both training & validation loss
     # Additionally track Recall@K & NDCG@K as proper validation metrics
     metrics = defaultdict(list)
@@ -669,6 +723,19 @@ def train_two_tower(
 
                 # Now the positive for each user is the one specified from the batch, so use this for the cross-entropy target
                 target = batch["item_id"].to(device) # (B,) indices of the positive item to train on per user
+
+            elif negative_sampling == 'popularity':
+                logits, target = _pop_weighted_obj(
+                    model,
+                    batch["user_id"].to(device),
+                    batch["user_cat_feats"].to(device),
+                    batch["user_numeric_feats"].to(device),
+                    batch["item_id"].to(device),
+                    item_ids_t, item_categories_gpu,
+                    num_negatives, 
+                    train_pop, popsample_coeff,
+                    device
+                )
 
             elif negative_sampling == 'in-batch':
                 # In-batch negative sampling exists as a comparison point, but uniform negatives are seen to perform much better on KuaiRec
@@ -774,6 +841,19 @@ def train_two_tower(
 
                     # Positive for each user is the one specified in the batch
                     target = batch["item_id"].to(device) # (B,) indices of the positive item to train on per user
+
+                elif negative_sampling == 'popularity':
+                    logits, target = _pop_weighted_obj(
+                        model,
+                        batch["user_id"].to(device),
+                        batch["user_cat_feats"].to(device),
+                        batch["user_numeric_feats"].to(device),
+                        batch["item_id"].to(device),
+                        item_ids_t, item_categories_gpu,
+                        num_negatives, 
+                        val_pop, popsample_coeff,
+                        device
+                    )
 
                 elif negative_sampling == 'in-batch':
                     # In-batch: validation positives act as negatives for each other

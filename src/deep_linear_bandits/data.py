@@ -137,7 +137,7 @@ def build_wr_weight_matrix(
     return weights
 
 def compute_item_popularity(
-    data_dir: str,
+    all_interactions: pd.DataFrame,
     unique_item_ids: np.ndarray = np.arange(0, NUM_ITEMS),
     watch_threshold: float = 2.0,
     popularity_mode: str = 'binary'
@@ -152,11 +152,8 @@ def compute_item_popularity(
         uses the sum of per-user max watch_ratio for each item
     """
 
-    # Re-read big matrix as the `simulate` CLI path doesn't necessarily need a big matrix read otherwise
-    bm = pd.read_csv(
-        data_dir + "big_matrix.csv",
-        usecols=["user_id", "video_id", "watch_ratio"]
-    )
+    # Rather than re-reading in the big matrix, which contaminates training with knowledge of validation, use the passed interactions as the knowledge of the big matrix
+    bm = all_interactions
 
     # Get popularities across the entire big matrix
     if popularity_mode == 'binary':
