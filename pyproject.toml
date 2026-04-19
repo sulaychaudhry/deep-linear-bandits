@@ -59,9 +59,12 @@ dev = [
     "notebook>=7.5.3",
 ]
 
+# Show Pyright where to look for .venv explicitly
 [tool.pyright]
 venvPath = "."
 venv = ".venv"
+typeCheckingMode = "off" # "off" is VS Code default
 
+# Show ty where to look for .venv explicitly
 [tool.ty.environment]
 python = "./.venv"

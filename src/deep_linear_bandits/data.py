@@ -63,8 +63,8 @@ def build_wr_weight_matrix(
     all_interactions: pd.DataFrame,
     wr_band_ratio: tuple[float, ...],
     watch_threshold: float,
-    mask_user: np.ndarray = None,
-    mask_item: np.ndarray = None
+    mask_user: np.ndarray | None = None,
+    mask_item: np.ndarray | None = None
 ) -> torch.Tensor:
     """
     Builds a (NUM_USERS, NUM_ITEMS) matrix of per-item sampling weights for
