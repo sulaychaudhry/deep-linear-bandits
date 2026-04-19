@@ -811,7 +811,7 @@ def train_two_tower(
             # Loss is not reduced by default, reduce based on whether using positive watch_ratio weights or not
             loss = loss_fn(logits, target)
             if weighted_loss:
-                weights = batch["watch_ratio"].to(device)
+                weights = batch["watch_ratio"].to(device).clamp(max=5.0)
                 loss = (loss * weights).sum() / weights.sum()
             else:
                 loss = loss.mean()
@@ -918,7 +918,7 @@ def train_two_tower(
                 
                 loss = loss_fn(logits, target)
                 if weighted_loss:
-                    weights = batch["watch_ratio"].to(device)
+                    weights = batch["watch_ratio"].to(device).clamp(max=5.0)
                     loss = (loss * weights).sum() / weights.sum()
                 else:
                     loss = loss.mean()
