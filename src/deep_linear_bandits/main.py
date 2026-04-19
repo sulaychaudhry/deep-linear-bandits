@@ -434,10 +434,22 @@ def train_tt(
         epochs=epochs,
         num_negatives=num_negatives,
         negative_sampling=negative_sampling,
+
+        train_pop=torch.tensor(dlb_data.compute_item_popularity(
+            all_intrs_train, 
+            watch_threshold=watch_threshold
+        ), dtype=torch.float32, device=device),
+        val_pop=torch.tensor(dlb_data.compute_item_popularity(
+            # Validation should have foreknowledge of both training pos/negs but also its own
+            pd.concat([all_intrs_train, all_intrs_val]).reset_index(drop=True),
+            watch_threshold=watch_threshold
+        ), dtype=torch.float32, device=device),
         popsample_coeff=popsample_coeff,
+
         score_sharpness=score_sharpness,
         train_wr_weights=train_wr_weights,
         val_wr_weights=val_wr_weights,
+
         optimiser=(
             torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
             if optimiser=='adam' else
@@ -661,11 +673,11 @@ def simulate(
     print(f"\nLoaded two-tower model from {model_path}")
 
     # Quickly load in the big matrix, so that it can be passed in its entirety to compute_item_popularity
+    # compute_item_popularity will automatically handle thresholding & deduplicating
     bm = pd.read_csv(
         DATA_DIR + "big_matrix.csv",
         usecols=["user_id", "video_id", "watch_ratio"]
     )
-    bm = bm.groupby(["user_id", "video_id"])["watch_ratio"].max().reset_index()
 
     print("\nLoading KuaiRec-Small...")
     small_matrix = dlb_data.KRSmall(DATA_DIR)

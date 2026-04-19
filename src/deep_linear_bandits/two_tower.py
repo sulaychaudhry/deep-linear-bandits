@@ -604,10 +604,15 @@ def train_two_tower(
     epochs: int,
     num_negatives: int,
     negative_sampling: str,             # 'uniform', 'in-batch', 'score-weighted', 'watch-ratio', or 'full-softmax'
+
+    train_pop: torch.Tensor,            # Popularity matrix known at training
+    val_pop: torch.Tensor,              # Popularity matrix known at validation
     popsample_coeff: float,             # weighting scale for sampling items relative to their popularity
+
     score_sharpness: float,             # sharpness for score-weighted sampling: closer to 0 = uniform, higher = harder negatives
     train_wr_weights: torch.Tensor,     # (NUM_USERS, NUM_ITEMS) precomputed band weights for training
     val_wr_weights: torch.Tensor,       # (NUM_USERS, NUM_ITEMS) precomputed band weights for validation
+
     optimiser: torch.optim.Optimizer    # Adam or AdamW
 ) -> tuple[dict, TwoTower]:
     """
@@ -679,11 +684,6 @@ def train_two_tower(
     # val loss negatives are drawn purely from items with no known positive signal
     val_pos_mask = train_pos_mask.clone()
     val_pos_mask[validation_set.user_ids, validation_set.item_ids] = True
-
-    # Retrieve most popular big matrix items (from training set data only) for popularity-weighted negative sampling
-    # TODO: train_pop and val_pop need to be retrieved
-    # train_pop = torch.tensor(dlb_data.compute_item_popularity(bm), device=device, dtype=torch.float32)
-    # val_pop = ...
 
     # Train model for multiple epochs, tracking both training & validation loss
     # Additionally track Recall@K & NDCG@K as proper validation metrics

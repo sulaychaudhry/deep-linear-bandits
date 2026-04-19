@@ -137,7 +137,7 @@ def build_wr_weight_matrix(
     return weights
 
 def compute_item_popularity(
-    all_interactions: pd.DataFrame,
+    interactions: pd.DataFrame,
     unique_item_ids: np.ndarray = np.arange(0, NUM_ITEMS),
     watch_threshold: float = 2.0,
     popularity_mode: str = 'binary'
@@ -146,29 +146,27 @@ def compute_item_popularity(
     Compute per-item big matrix popularities for all `unique_item_ids` passed,
     returned as a zero-filled item array s.t. you can index by the item IDs.
 
+    `interactions` allows for passing train- or val-specific interaction matrices.
+
     If `popularity_mode`=='binary':
         uses count of user-item pairs with watch_ratio >= watch_threshold
     If `popularity_mode`==`continuous`:
         uses the sum of per-user max watch_ratio for each item
     """
 
-    # Rather than re-reading in the big matrix, which contaminates training with knowledge of validation, use the passed interactions as the knowledge of the big matrix
-    bm = all_interactions
-
-    # Get popularities across the entire big matrix
+    # Get popularities across the entire big matrix passed in
     if popularity_mode == 'binary':
-        bm = (
-            bm[bm["watch_ratio"] >= watch_threshold]
+        interactions = (
+            interactions[interactions["watch_ratio"] >= watch_threshold]
             .drop(columns=["watch_ratio"])
             .drop_duplicates()
         )
-        per_item = bm["video_id"].value_counts()
+        per_item = interactions["video_id"].value_counts()
     else:
-        per_user_item = bm.groupby(["user_id", "video_id"], sort=False)["watch_ratio"].max()
+        per_user_item = interactions.groupby(["user_id", "video_id"], sort=False)["watch_ratio"].max()
         per_item = per_user_item.groupby("video_id").sum()
 
-    # Only keep `unique_item_ids` that were passed, the rest are 0; since it's the whole matrix
-    # you can still index by the unique item ids
+    # Only keep `unique_item_ids` that were passed, the rest are 0; since it's the whole matrix you can still index by the unique item ids
     return per_item.reindex(unique_item_ids, fill_value=0).to_numpy(dtype=np.float64)
 
 def preprocess_item_categories(
