@@ -10,53 +10,14 @@ mkdir -p $LOG_DIR # If doesn't exist
 
 PARALLEL_SEEDS=true
 SEED_COUNT=100
-COMMON="--rounds 10000 --seed 117 --seed-count ${SEED_COUNT}"
+COMMON="--seed 117 --rounds 10000 --seed-count ${SEED_COUNT}"
 
 NAMES=()
 FLAGS=()
 
 add() { NAMES+=("$1"); FLAGS+=("$2"); }
 
-# Dispatch a simulation for all existing models
-add default             "--model default"
-add shallow             "--model shallow"
-add deep                "--model deep"
-add wide                "--model wide"
-add narrow              "--model narrow"
-add narrowest           "--model narrowest"
-
-add no-sidefeats        "--model no-sidefeats"
-add no-relu             "--model no-relu"
-add mf-baseline         "--model mf-baseline"
-add no-l2               "--model no-l2"
-
-add dim-16              "--model dim-16"
-add dim-64              "--model dim-64"
-
-add temp-005            "--model temp-005"
-add temp-01             "--model temp-01"
-
-add in-batch-neg        "--model in-batch-neg"
-add user-uniform-neg    "--model user-uniform-neg"
-add score-weight-neg1   "--model score-weight-neg1"
-add score-weight-neg2   "--model score-weight-neg2"
-add wr-banded-neg1      "--model wr-banded-neg1"
-add wr-banded-neg2      "--model wr-banded-neg2"
-
-add neg-64              "--model neg-64"
-add neg-256             "--model neg-256"
-add neg-512             "--model neg-512"
-
-add no-dropout          "--model no-dropout"
-add dropout-04          "--model dropout-04"
-
-add adamw               "--model adamw"
-
-add lr-5em4             "--model lr-5em4"
-add lr-2em3             "--model lr-2em3"
-
-add wt-1                "--model wt-1"
-add wt-3                "--model wt-3"
+# add ...               "..."
 
 for i in "${!NAMES[@]}"; do
     name="${NAMES[$i]}"

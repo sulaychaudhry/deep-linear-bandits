@@ -483,6 +483,7 @@ def _score_weighted_obj(
         # Sample relative to the softmax-created probability distribution
         weights = torch.softmax(scaled, dim=-1)                   # (B, NUM_ITEMS)
         neg_indices = torch.multinomial(weights, num_negatives, replacement=False)  # (B, K)
+        neg_q = weights.gather(1, neg_indices)                    # (B, K)
 
     # Properly get item embeddings now
     pos_item_emb  = all_item_embs[pos_item_ids]                                  # (B, D)
@@ -491,6 +492,9 @@ def _score_weighted_obj(
     pos_scores = (user_embs * pos_item_emb).sum(dim=-1, keepdim=True)           # (B, 1); just dotprod between user and pos item
     neg_scores = torch.bmm(neg_item_embs, user_embs.unsqueeze(-1)).squeeze(-1)  # (B, K, D) bmm (B, D, 1) -> (B, K, 1) -> (B, K)
     logits = torch.cat([pos_scores, neg_scores], dim=1) / model.logit_temp      # (B, 1+K)
+    correction = torch.zeros_like(logits)
+    correction[:, 1:] = torch.log(neg_q)
+    logits = logits - correction
     target = torch.zeros(logits.size(0), dtype=torch.long, device=device)       # Positives are all at position 0 of each of the B rows
 
     return logits, target
@@ -523,7 +527,9 @@ def _watch_ratio_weighted_obj(
     # Look up precomputed per-user weights and sample K negatives per user
     with torch.no_grad():
         weights = wr_weight_matrix[user_ids]                                        # (B, NUM_ITEMS)
+        q_norm = weights / weights.sum(dim=1, keepdim=True)                         # (B, NUM_ITEMS)
         neg_indices = torch.multinomial(weights, num_negatives, replacement=False)  # (B, K)
+        neg_q = q_norm.gather(1, neg_indices)                                       # (B, K)
 
     pos_item_emb  = all_item_embs[pos_item_ids]                                  # (B, D)
     neg_item_embs = all_item_embs[neg_indices]                                   # (B, K, D)
@@ -531,6 +537,9 @@ def _watch_ratio_weighted_obj(
     pos_scores = (user_embs * pos_item_emb).sum(dim=-1, keepdim=True)           # (B, 1); just dotprod between user and pos item
     neg_scores = torch.bmm(neg_item_embs, user_embs.unsqueeze(-1)).squeeze(-1)  # (B, K, D) bmm (B, D, 1) -> (B, K, 1) -> (B, K)
     logits = torch.cat([pos_scores, neg_scores], dim=1) / model.logit_temp      # (B, 1+K)
+    correction = torch.zeros_like(logits)
+    correction[:, 1:] = torch.log(neg_q)
+    logits = logits - correction
     
     target = torch.zeros(logits.size(0), dtype=torch.long, device=device) # Positives at pos 0 for all users
 
@@ -560,7 +569,14 @@ def _pop_weighted_obj(
     """
 
     with torch.no_grad():
-        neg_idxs = torch.multinomial(pop_matrix * popsample_coeff, num_negatives, replacement=False)
+        pop_weights = torch.where(
+            pop_matrix > 0,
+            pop_matrix ** popsample_coeff,
+            torch.zeros_like(pop_matrix)
+        )
+        pop_probs = pop_weights / pop_weights.sum()
+        neg_idxs = torch.multinomial(pop_weights, num_negatives, replacement=False)
+        log_q_pop = torch.log(pop_probs[neg_idxs])
     
     # Since they're shared negatives, can use the model's actual forward pass interface
     logits = model(
@@ -574,6 +590,10 @@ def _pop_weighted_obj(
         pos_item_categories=item_categories_gpu[pos_item_ids],
         neg_item_categories=item_categories_gpu[neg_idxs]
     )
+
+    correction = torch.zeros_like(logits)
+    correction[:, 1:] = log_q_pop.unsqueeze(0)
+    logits = logits - correction
 
     # Positive at pos 0
     target = torch.zeros(
@@ -687,6 +707,16 @@ def train_two_tower(
     val_pos_mask = train_pos_mask.clone()
     val_pos_mask[validation_set.user_ids, validation_set.item_ids] = True
 
+    # Item frequency log probabilities for in-batch sampling correction (logQ)
+    train_freq = torch.from_numpy(
+        np.bincount(training_set.item_ids, minlength=NUM_ITEMS)
+    ).to(device=device, dtype=torch.float32)
+    log_q_in_batch_train = torch.log(train_freq.clamp_min(1.0)) - torch.log(train_freq.sum())
+    val_freq = torch.from_numpy(
+        np.bincount(validation_set.item_ids, minlength=NUM_ITEMS)
+    ).to(device=device, dtype=torch.float32)
+    log_q_in_batch_val = torch.log(val_freq.clamp_min(1.0)) - torch.log(val_freq.sum())
+
     # Train model for multiple epochs, tracking both training & validation loss
     # Additionally track Recall@K & NDCG@K as proper validation metrics
     metrics = defaultdict(list)
@@ -744,18 +774,20 @@ def train_two_tower(
                 # TwoTower is built for uniform negatives; this simply does the work of TwoTower's forward pass manually if it was using in-batch negative sampling -> better than writing two side-by-side TwoTower implementations, esp. given that in-batch negative sampling is not used for actual high-quality results
 
                 # In-batch negative sampling: each user's positive item acts as a negative for all other users
+                batch_item_ids = batch["item_id"].to(device)
                 user_embs = model.user_tower(
                     batch["user_id"].to(device),
                     batch["user_cat_feats"].to(device),
                     batch["user_numeric_feats"].to(device)
                 )  # (B, D)
                 pos_item_embs = model.item_tower(
-                    batch["item_id"].to(device),
+                    batch_item_ids,
                     batch["item_categories"].to(device)
                 )  # (B, D)
 
                 # Full similarity matrix: each user scored against all items in the batch
                 logits = (user_embs @ pos_item_embs.T) / model.logit_temp  # (B, B)
+                logits = logits - log_q_in_batch_train[batch_item_ids].unsqueeze(0)
 
                 # The positive for user i is item i (on the diagonal)
                 target = torch.arange(logits.size(0), device=device)
@@ -865,16 +897,18 @@ def train_two_tower(
 
                 elif negative_sampling == 'in-batch':
                     # In-batch: validation positives act as negatives for each other
+                    batch_item_ids = batch["item_id"].to(device)
                     user_embs = model.user_tower(
                         batch["user_id"].to(device),
                         batch["user_cat_feats"].to(device),
                         batch["user_numeric_feats"].to(device)
                     )
                     pos_item_embs = model.item_tower(
-                        batch["item_id"].to(device),
+                        batch_item_ids,
                         batch["item_categories"].to(device)
                     )
                     logits = (user_embs @ pos_item_embs.T) / model.logit_temp
+                    logits = logits - log_q_in_batch_val[batch_item_ids].unsqueeze(0)
                     target = torch.arange(logits.size(0), device=device)
                 elif negative_sampling == 'score-weighted':
                     # Score-weighted: same sharpness as training, both train & val positives masked
