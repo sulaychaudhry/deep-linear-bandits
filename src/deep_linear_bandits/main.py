@@ -88,7 +88,7 @@ def cli() -> None:
     '--hidden-size',
     type=click.IntRange(1),
     multiple=True,
-    default=(256, 128),
+    default=(512, 256),
     show_default=True,
     help='Repeat for each hidden layer, e.g. --hidden-size 256 --hidden-size 128'
 )
@@ -142,7 +142,7 @@ def cli() -> None:
 @click.option(
     '--num-negatives',
     type=click.IntRange(1),
-    default=256,
+    default=1024,
     show_default=True,
     help='The number of uniform negatives to sample per positive interaction (only used with --negative-sampling uniform/score-weighted/watch-ratio).'
 )
@@ -192,14 +192,14 @@ def cli() -> None:
 @click.option(
     '--weight-decay',
     type=click.FloatRange(min=0.0),
-    default=0.00,
+    default=0.01,
     show_default=True,
     help='Weight decay for the optimiser used to train the model; if using a weight_decay > 0.0, it is recommended to use AdamW as Adam is shown to update incorrectly with weight decay. The recommended starting point for weight_decay is 0.01.'
 )
 @click.option(
     '--optimiser',
     type=click.Choice(('adam', 'adamw')),
-    default='adam',
+    default='adamw',
     show_default=True,
     help='Optimiser to use: "adam" (no weight decay) or "adamw" (decoupled weight decay).'
 )
