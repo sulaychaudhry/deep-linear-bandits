@@ -20,6 +20,7 @@ add default                       ""
 add narrower                      "--hidden-size 128  --hidden-size 64"
 add wider                         "--hidden-size 1024 --hidden-size 512"
 add deeper                        "--hidden-size 512  --hidden-size 256 --hidden-size 128"
+add shallower                     "--hidden-size 512"
 
 # Loss sampling techniques
 add in-batch-neg                  "--negative-sampling in-batch"
