@@ -14,7 +14,33 @@ FLAGS=()
 
 add() { NAMES+=("$1"); FLAGS+=("$2"); }
 
-# add ...                  "..."
+add default                       ""
+
+# Different tower configurations
+add narrower                      "--hidden-size 128  --hidden-size 64"
+add wider                         "--hidden-size 1024 --hidden-size 512"
+add deeper                        "--hidden-size 512  --hidden-size 256 --hidden-size 128"
+
+# Loss sampling techniques
+add in-batch-neg                  "--negative-sampling in-batch"
+add user-uniform-neg              "--negative-sampling score-weighted --score-sharpness 0"
+add score-weight-neg              "--negative-sampling score-weighted"
+add wr-banded-neg                 "--negative-sampling watch-ratio"
+add pop-weight-neg                "--negative-sampling popularity"
+add full-softmax-neg              "--negative-sampling full-softmax"    
+
+# Ablations
+add no-sidefeats                  "--no-side-features"
+add no-relu                       "--no-relu"
+add id-only-mf                    "--skip-towers --no-side-features"
+add no-l2                         "--no-l2-norm"
+
+# Weighted loss from YouTube paper
+add weighted-loss                 "--weighted-loss"
+
+# Output embedding dimensionality
+add dim-16                        "--output-size 16"
+add dim-64                        "--output-size 64"
 
 for i in "${!NAMES[@]}"; do
     name="${NAMES[$i]}"
