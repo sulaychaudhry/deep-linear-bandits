@@ -1041,50 +1041,51 @@ def visualise(
     epochs = range(1, len(metrics["train_loss"]) + 1)
     colours = plt.rcParams["axes.prop_cycle"].by_key()["color"] # PyPlot default colour cycle
 
-    fig, (ax_loss, ax_recall, ax_ndcg) = plt.subplots(1, 3, figsize=(24, 10)) # Set up superplot
+    fig, (ax_loss, ax_recall, ax_ndcg) = plt.subplots(3, 1, figsize=(10, 9), sharex=True) # Set up superplot
 
     # Plot training vs. validation loss
     ax_loss.plot(epochs, metrics["train_loss"], label="Training Loss")
     ax_loss.plot(epochs, metrics["val_loss"], label="Validation Loss")
-    ax_loss.set_xlabel("Epoch")
-    ax_loss.set_ylabel("Mean per-Batch Cross-Entropy Loss")
+    ax_loss.set_ylabel("Mean CE Loss", fontsize=11)
     ax_loss.set_title(
-        f"Training & Validation Loss per Epoch ({metrics['negative_sampling']} negatives"
+        f"Mean per-Batch Cross-Entropy Loss per Epoch ({metrics['negative_sampling']} negatives"
         +   (
                 f", sharpness={metrics["score_sharpness"]})" 
                 if metrics['negative_sampling'] == 'score-weighted'
                 else ")"
             )
     )
-    ax_loss.legend(fontsize=10, loc='upper right')
+    ax_loss.legend(fontsize=10, loc='upper right', ncols=2)
     ax_loss.grid(True, alpha=0.3)
 
     # Plot Recall@K over epochs with the random policy baselines
     for i, k in enumerate(k_values):
         colour = colours[i % len(colours)]
-        ax_recall.plot(epochs, metrics[f"recall@{k}"], color=colour, label=f"Model Recall@{k}")
-        ax_recall.axhline(
-            recall_baselines[i],
-            color=colour,
-            linestyle=":",
-            alpha=0.7,
-            label=f"Random Policy Recall@{k} ({recall_baselines[i]:.4f})"
-        )
-    ax_recall.set_xlabel("Epoch")
-    ax_recall.set_ylabel("Mean User Recall@K")
-    ax_recall.set_title("Recall@K per Epoch (Validation Set)")
-    ax_recall.legend(fontsize=9, loc='lower right')
+        ax_recall.plot(epochs, metrics[f"recall@{k}"], color=colour, label=f"Recall@{k}")
+        
+        ## Previously calculated, but cluttered the plots
+        # ax_recall.axhline(
+        #     recall_baselines[i],
+        #     color=colour,
+        #     linestyle=":",
+        #     alpha=0.7,
+        #     label=f"Random Policy Recall@{k} ({recall_baselines[i]:.4f})"
+        # )
+    ax_recall.set_ylabel("Mean Recall@K", fontsize=11)
+    ax_recall.set_title("Mean User Recall@K per Epoch (Validation Set)")
+    ax_recall.legend(fontsize=10, loc='lower right', ncols=4)
     ax_recall.grid(True, alpha=0.3)
 
     # Plot NDCG@K over epochs
     for i, k in enumerate(k_values):
         colour = colours[i % len(colours)]
         ax_ndcg.plot(epochs, metrics[f"ndcg@{k}"], color=colour, label=f"NDCG@{k}")
-    ax_ndcg.set_xlabel("Epoch")
-    ax_ndcg.set_ylabel("Mean User NDCG@K")
-    ax_ndcg.set_title("NDCG@K per Epoch (Validation Set)")
-    ax_ndcg.legend(fontsize=10, loc='lower right')
+    ax_ndcg.set_ylabel("Mean NDCG@K", fontsize=11)
+    ax_ndcg.set_title("Mean User NDCG@K per Epoch (Validation Set)")
+    ax_ndcg.legend(fontsize=10, loc='lower right', ncols=4)
     ax_ndcg.grid(True, alpha=0.3)
+
+    ax_ndcg.set_xlabel("Epoch", fontsize=11) # Bottom plot, so used for all plots
 
     plt.tight_layout()
     plt.savefig(save_path)
