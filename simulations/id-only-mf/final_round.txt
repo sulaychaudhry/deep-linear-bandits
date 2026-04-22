@@ -1,0 +1,131 @@
+FINAL ROUND RESULTS
+
+Model: id-only-mf
+Rounds: 10000
+Simulation runs: 100
+Seed: 117
+
+Watch threshold: 2.0
+Hadamard: True
+Ridge regression lambda: 1.0
+Long-tail percentile: 80.0
+
+Policy: Greedy
+	Cumulative reward (mean +/- std): 3369.7 +/- 28.340959757919272
+	Cumulative regret (mean +/- std): 6630.3 +/- 28.340959757919272
+	Gini Coefficient (mean +/- std): 0.9026165398256687 +/- 0.0012588085827277722
+	Long-Tail Coverage (mean +/- std): 0.329906015037594 +/- 0.0039055699631366458
+	Average Recommendation Popularity (mean +/- std): 859.576921 +/- 5.671643731887527
+
+Policy: Random
+	Cumulative reward (mean +/- std): 467.82 +/- 20.90089950217454
+	Cumulative regret (mean +/- std): 9532.18 +/- 20.900899502174553
+	Gini Coefficient (mean +/- std): 0.3177913291253382 +/- 0.003939858611580839
+	Long-Tail Coverage (mean +/- std): 0.9506052631578945 +/- 0.003827169223285879
+	Average Recommendation Popularity (mean +/- std): 196.366821 +/- 2.184297395653579
+
+Policy: Popularity
+	Cumulative reward (mean +/- std): 6023.16 +/- 27.829020823593492
+	Cumulative regret (mean +/- std): 3976.84 +/- 27.829020823593492
+	Gini Coefficient (mean +/- std): 0.9975492317403064 +/- 1.1249368133267514e-05
+	Long-Tail Coverage (mean +/- std): 0.0 +/- 0.0
+	Average Recommendation Popularity (mean +/- std): 1963.5453579999992 +/- 1.243538925742179
+
+Policy: ε-greedy (ε=0.01)
+	Cumulative reward (mean +/- std): 5238.27 +/- 1216.1912913271497
+	Cumulative regret (mean +/- std): 4761.73 +/- 1216.1912913271497
+	Gini Coefficient (mean +/- std): 0.9948250850616173 +/- 0.0018837374201419647
+	Long-Tail Coverage (mean +/- std): 0.05916165413533832 +/- 0.016952649353004653
+	Average Recommendation Popularity (mean +/- std): 1474.7397529999996 +/- 332.75248412804933
+
+Policy: ε-greedy (ε=0.05)
+	Cumulative reward (mean +/- std): 5711.24 +/- 519.3519446387006
+	Cumulative regret (mean +/- std): 4288.75 +/- 519.3560893067491
+	Gini Coefficient (mean +/- std): 0.9876310201382624 +/- 0.0021849664840811432
+	Long-Tail Coverage (mean +/- std): 0.1591616541353384 +/- 0.01423265323915454
+	Average Recommendation Popularity (mean +/- std): 1618.031648 +/- 154.4127551419296
+
+Policy: ε-greedy (ε=0.1)
+	Cumulative reward (mean +/- std): 5612.89 +/- 378.62997490954143
+	Cumulative regret (mean +/- std): 4387.11 +/- 378.62997490954143
+	Gini Coefficient (mean +/- std): 0.9701742669071236 +/- 0.0038617523341153387
+	Long-Tail Coverage (mean +/- std): 0.2741503759398495 +/- 0.014573197592750064
+	Average Recommendation Popularity (mean +/- std): 1599.337449 +/- 130.12226284948667
+
+Policy: ε-greedy (ε=0.2)
+	Cumulative reward (mean +/- std): 5113.41 +/- 211.46621928809347
+	Cumulative regret (mean +/- std): 4886.56 +/- 211.41259754328738
+	Gini Coefficient (mean +/- std): 0.919250972046889 +/- 0.004129048135116876
+	Long-Tail Coverage (mean +/- std): 0.4620263157894733 +/- 0.011892837386242023
+	Average Recommendation Popularity (mean +/- std): 1503.8032689999998 +/- 87.46998948483268
+
+Policy: LinUCB (α=0.1)
+	Cumulative reward (mean +/- std): 5843.85 +/- 1104.0944196489718
+	Cumulative regret (mean +/- std): 4156.1 +/- 1104.1279590699621
+	Gini Coefficient (mean +/- std): 0.9956586438232645 +/- 0.002310988041360386
+	Long-Tail Coverage (mean +/- std): 0.04405639097744359 +/- 0.026342987824443855
+	Average Recommendation Popularity (mean +/- std): 1515.6816159999998 +/- 330.03487839328426
+
+Policy: LinUCB (α=0.5)
+	Cumulative reward (mean +/- std): 6366.02 +/- 667.4458776560087
+	Cumulative regret (mean +/- std): 3633.96 +/- 667.4542369331398
+	Gini Coefficient (mean +/- std): 0.9959963919446948 +/- 0.0016050244027067055
+	Long-Tail Coverage (mean +/- std): 0.050161654135338345 +/- 0.022160323159889563
+	Average Recommendation Popularity (mean +/- std): 1581.7758509999999 +/- 243.71630971087117
+
+Policy: LinUCB (α=1.0)
+	Cumulative reward (mean +/- std): 6470.62 +/- 168.2405290053499
+	Cumulative regret (mean +/- std): 3529.38 +/- 168.2405290053499
+	Gini Coefficient (mean +/- std): 0.9956706480312587 +/- 0.001477739648017943
+	Long-Tail Coverage (mean +/- std): 0.06100751879699249 +/- 0.01923652141127802
+	Average Recommendation Popularity (mean +/- std): 1552.3373260000005 +/- 155.6141907000166
+
+Policy: LinUCB (α=2.0)
+	Cumulative reward (mean +/- std): 6295.98 +/- 60.709798220715584
+	Cumulative regret (mean +/- std): 3704.02 +/- 60.709798220715584
+	Gini Coefficient (mean +/- std): 0.993805056206793 +/- 0.001009745907799423
+	Long-Tail Coverage (mean +/- std): 0.0893233082706767 +/- 0.01604809676926728
+	Average Recommendation Popularity (mean +/- std): 1372.2576079999997 +/- 90.32594584482212
+
+Policy: LinUCB (α=5.0)
+	Cumulative reward (mean +/- std): 5396.21 +/- 55.188458032454584
+	Cumulative regret (mean +/- std): 4603.78 +/- 55.19303941621624
+	Gini Coefficient (mean +/- std): 0.984101640516982 +/- 0.0019096628167016621
+	Long-Tail Coverage (mean +/- std): 0.1516654135338346 +/- 0.01475660932589166
+	Average Recommendation Popularity (mean +/- std): 1065.823932 +/- 16.837330508794327
+
+Policy: TS (ʋ=0.25)
+	Cumulative reward (mean +/- std): 6405.46 +/- 182.22142684108252
+	Cumulative regret (mean +/- std): 3594.54 +/- 182.22142684108252
+	Gini Coefficient (mean +/- std): 0.9935171247370002 +/- 0.003918368525839368
+	Long-Tail Coverage (mean +/- std): 0.09611278195488719 +/- 0.04556953053497129
+	Average Recommendation Popularity (mean +/- std): 1664.0094489999997 +/- 154.55336821850855
+
+Policy: TS (ʋ=0.5)
+	Cumulative reward (mean +/- std): 6114.26 +/- 130.35993402882647
+	Cumulative regret (mean +/- std): 3885.72 +/- 130.37738147393515
+	Gini Coefficient (mean +/- std): 0.9861933393447547 +/- 0.004899357973489915
+	Long-Tail Coverage (mean +/- std): 0.175172932330827 +/- 0.04008907770412525
+	Average Recommendation Popularity (mean +/- std): 1532.0123979999998 +/- 149.43738558915234
+
+Policy: TS (ʋ=1.0)
+	Cumulative reward (mean +/- std): 4905.98 +/- 213.3319000993522
+	Cumulative regret (mean +/- std): 5094.02 +/- 213.3319000993522
+	Gini Coefficient (mean +/- std): 0.9366515335136759 +/- 0.015197770280330758
+	Long-Tail Coverage (mean +/- std): 0.3869661654135339 +/- 0.046328941076572205
+	Average Recommendation Popularity (mean +/- std): 1199.8578380000001 +/- 92.51135243149758
+
+Policy: TS (ʋ=2.0)
+	Cumulative reward (mean +/- std): 1595.57 +/- 314.9553065118922
+	Cumulative regret (mean +/- std): 8404.43 +/- 314.9553065118922
+	Gini Coefficient (mean +/- std): 0.7223648926961228 +/- 0.03082284139246606
+	Long-Tail Coverage (mean +/- std): 0.6940187969924813 +/- 0.030260850563515348
+	Average Recommendation Popularity (mean +/- std): 402.19731399999984 +/- 76.03485680508645
+
+Policy: TS (ʋ=5.0)
+	Cumulative reward (mean +/- std): 354.9 +/- 26.866149705530937
+	Cumulative regret (mean +/- std): 9645.1 +/- 26.86614970553093
+	Gini Coefficient (mean +/- std): 0.6175625434325215 +/- 0.004425920908618391
+	Long-Tail Coverage (mean +/- std): 0.8064548872180454 +/- 0.006637027197797894
+	Average Recommendation Popularity (mean +/- std): 100.243152 +/- 3.1685098928827724
+
