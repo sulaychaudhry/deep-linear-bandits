@@ -1,0 +1,45 @@
+{
+    "save_name": "pop-weight-neg",
+    "watch_threshold": 2.0,
+    "metric_k": [
+        10,
+        50,
+        100,
+        200
+    ],
+    "best_k": 50,
+    "side_features": true,
+    "skip_towers": false,
+    "hidden_size": [
+        512,
+        256
+    ],
+    "output_size": 32,
+    "relu": true,
+    "dropout": 0.2,
+    "l2_norm": true,
+    "logit_temp": 0.07,
+    "batch_size": 1024,
+    "epochs": 100,
+    "num_negatives": 1024,
+    "negative_sampling": "popularity",
+    "weighted_loss": false,
+    "popsample_coeff": 1.0,
+    "wr_band_ratio": [
+        0.15,
+        0.25,
+        0.25,
+        0.2,
+        0.15
+    ],
+    "score_sharpness": 1.0,
+    "lr": 0.001,
+    "weight_decay": 0.01,
+    "optimiser": "adamw",
+    "data_workers": 4,
+    "id_emb_dims": 32,
+    "item_cat_emb_dims": 16,
+    "user_cat_emb_root": "2",
+    "user_cat_emb_cap": 16,
+    "seed": 117
+}
