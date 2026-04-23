@@ -56,7 +56,7 @@ def _plot_acc_metric(
         else "shared random seed"
     )
 
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6), sharey=True)
+    fig, axes = plt.subplots(1, 3, figsize=(12, 6), sharey=True)
     fig.suptitle(f"Policy simulation: cumulative bandit {metric_name} ({subtitle})")
 
     # Redraw baseline policies on each family subplot for direct visual comparison
@@ -192,7 +192,7 @@ def plot_ba_metrics_over_time(metrics: dict, output_dir: str) -> None:
             legend_loc=loc
         )
 
-def plot_regret_rolling(metrics: dict, output_dir: str, window: int = 500) -> None:
+def plot_regret_rolling(metrics: dict, output_dir: str, window: int = 2000) -> None:
     """
     Plot rolling-mean per-round regret (regret rate), one subplot per policy family.
     """
@@ -226,7 +226,7 @@ def plot_regret_rolling(metrics: dict, output_dir: str, window: int = 500) -> No
         else "shared random seed"
     )
 
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6), sharey=True)
+    fig, axes = plt.subplots(1, 3, figsize=(12, 6), sharey=True)
     fig.suptitle(
         f"Policy simulation: per-round regret (rolling mean, window={window}) ({subtitle})"
     )
@@ -388,8 +388,8 @@ def plot_diversity_accuracy_scatter(metrics: dict, output_dir: str) -> None:
     )
 
     groups = _group_policies(labels)
-    fig, axes = plt.subplots(1, 3, figsize=(20, 7))
-    fig.suptitle(f"Diversity-accuracy tradeoff after {rounds} rounds ({subtitle})")
+    fig, axes = plt.subplots(3, 1, figsize=(8, 11), sharex=True)
+    fig.suptitle(f"Diversity-accuracy tradeoff after {rounds} rounds ({subtitle})", x=0.53, y=0.99)
 
     for i, (ax, (y_vals, y_label)) in enumerate(zip(axes, [
         (metrics['mean_gini'],               "Gini Coefficient"),
@@ -420,7 +420,8 @@ def plot_diversity_accuracy_scatter(metrics: dict, output_dir: str) -> None:
                     label=(labels[idx] if i == 0 else None)
                 )
 
-        ax.set_xlabel("Final cumulative reward")
+        if i == len(axes) - 1:
+            ax.set_xlabel("Final cumulative reward")
         ax.set_ylabel(y_label)
         ax.grid(True, alpha=0.3)
 
@@ -430,17 +431,16 @@ def plot_diversity_accuracy_scatter(metrics: dict, output_dir: str) -> None:
 
     # Single shared legend at the bottom spanning all subplots
     handles, labs = axes[0].get_legend_handles_labels()
-    n_cols = (len(handles) + 1) // 2  # ~2 rows keeps the legend wide & readable
     fig.legend(
         handles, labs,
         loc='lower center',
-        ncol=n_cols,
+        ncol=4,
         bbox_to_anchor=(0.5, 0.04),
         frameon=True,
         fontsize=10
     )
     plt.tight_layout()
-    plt.subplots_adjust(bottom=0.25)  # Make room for the legend below the subplots
+    plt.subplots_adjust(bottom=0.2)  # Make room for the legend below the subplots
     plt.savefig(output_dir + "diversity_accuracy_scatter.png")
     plt.close()
 
