@@ -17,7 +17,45 @@ FLAGS=()
 
 add() { NAMES+=("$1"); FLAGS+=("$2"); }
 
-# add ...               "..."
+# Dispatch binary reward tests, 10k rounds
+add default                       "--model default --binary-reward"
+add narrower                      "--model narrower --binary-reward"
+add wider                         "--model wider --binary-reward"
+add deeper                        "--model deeper --binary-reward"
+add shallower                     "--model shallower --binary-reward"
+add in-batch-neg                  "--model in-batch-neg --binary-reward"
+add user-uniform-neg              "--model user-uniform-neg --binary-reward"
+add score-weight-neg              "--model score-weight-neg --binary-reward"
+add wr-banded-neg                 "--model wr-banded-neg --binary-reward"
+add pop-weight-neg                "--model pop-weight-neg --binary-reward"
+add full-softmax-neg              "--model full-softmax-neg --binary-reward"  
+add no-sidefeats                  "--model no-sidefeats --binary-reward"
+add no-relu                       "--model no-relu --binary-reward"
+add id-only-mf                    "--model id-only-mf --binary-reward"
+add no-l2                         "--model no-l2 --binary-reward"
+add weighted-loss                 "--model weighted-loss --binary-reward"
+add dim-16                        "--model dim-16 --binary-reward"
+add dim-64                        "--model dim-64 --binary-reward"
+
+# Dispatch continuous reward tests, 10k rounds
+add default-cont                  "--model default --continuous-reward"
+add narrower-cont                 "--model narrower --continuous-reward"
+add wider-cont                    "--model wider --continuous-reward"
+add deeper-cont                   "--model deeper --continuous-reward"
+add shallower-cont                "--model shallower --continuous-reward"
+add in-batch-neg-cont             "--model in-batch-neg --continuous-reward"
+add user-uniform-neg-cont         "--model user-uniform-neg --continuous-reward"
+add score-weight-neg-cont         "--model score-weight-neg --continuous-reward"
+add wr-banded-neg-cont            "--model wr-banded-neg --continuous-reward"
+add pop-weight-neg-cont           "--model pop-weight-neg --continuous-reward"
+add full-softmax-neg-cont         "--model full-softmax-neg --continuous-reward"
+add no-sidefeats-cont             "--model no-sidefeats --continuous-reward"
+add no-relu-cont                  "--model no-relu --continuous-reward"
+add id-only-mf-cont               "--model id-only-mf --continuous-reward"      
+add no-l2-cont                    "--model no-l2 --continuous-reward"
+add weighted-loss-cont            "--model weighted-loss --continuous-reward"
+add dim-16-cont                   "--model dim-16 --continuous-reward"
+add dim-64-cont                   "--model dim-64 --continuous-reward"
 
 for i in "${!NAMES[@]}"; do
     name="${NAMES[$i]}"

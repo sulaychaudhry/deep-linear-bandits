@@ -2,9 +2,10 @@
 #
 #SBATCH --partition=tiger
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=3
 #SBATCH --mem=2000
 #SBATCH --time=2-00:00:00
+#SBATCH --exclusive=user
 
 echo -e "Starting job at $(date)\n"
 echo -e "Running:\n\t uv run dlb simulate ${SIM_FLAGS}"
