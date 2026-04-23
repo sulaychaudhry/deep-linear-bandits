@@ -71,7 +71,7 @@ Outputs are written to `simulations/<sim-name>`.
 ## Example Local Run (GPU)
 ```bash
 uv run dlb train-tt --save-name tt1 --hidden-size 512 --hidden-size 256 --output-size 32
-uv run dlb simulate --save-name sim1 --model-name tt1 --seed 125 --rounds 100
+uv run dlb simulate --save-name sim1 --model tt1 --seed 125 --rounds 100
 ```
 
 ## Additional Commands
@@ -129,7 +129,7 @@ Various scripts are available under `slurm/` for the use of the DCS Batch Comput
 `COMMON` denotes common flags passed to all models.  
 To add a model or simulation respectively (ready to be dispatched), simply add a new line of this format below the `add()` function:
 ```bash
-# In `train-all-tts,sh`
+# In `train-all-tts.sh`
 add <model-name>           "<two-tower flags>"
 
 # In `simulate-all.sh`
@@ -137,7 +137,7 @@ add <sim-name>             "<simulation flags>"
 ```
 Note that `--save-name` does not need passing as a flag; this is handled automatically, and again you do not need to pass the `COMMON` flags.
 
-For `slurm/simulate-all.sh`, note that the script is set up the parallelise the seeds and will collate them automatically for you; you simply need to change the `SEED_COUNT` variable. You may set `PARALLEL_SEEDS=false` if you would like, but there is no benefit to this.
+For `slurm/simulate-all.sh`, note that the script is set up to parallelise the seeds and will collate them automatically for you; you simply need to change the `SEED_COUNT` variable. You may set `PARALLEL_SEEDS=false` if you would like, but there is no benefit to this.
 
 Then for dispatching the two-tower jobs:
 ```bash
