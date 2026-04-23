@@ -1,12 +1,13 @@
 #!/bin/bash
 # Submits all simulate jobs to Slurm
 
-SIM_SCRIPT="slurm/simulate.sbatch"
-COL_SCRIPT="slurm/collate.sbatch"
-DLB_DIR="/dcs/23/u5567816/deep-linear-bandits"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DLB_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SIM_SCRIPT="${SCRIPT_DIR}/simulate.sbatch"
+COL_SCRIPT="${SCRIPT_DIR}/collate.sbatch"
 LOG_DIR="${DLB_DIR}/slurm/logs"
 
-mkdir -p $LOG_DIR # If doesn't exist
+mkdir -p "$LOG_DIR" # If doesn't exist
 
 PARALLEL_SEEDS=true
 SEED_COUNT=100
@@ -78,9 +79,10 @@ for i in "${!NAMES[@]}"; do
         JOB_ID=$( \
             sbatch --parsable \
                 --job-name="sim-${name}" \
+                --chdir="${DLB_DIR}" \
                 --output="${LOG_DIR}/sim_${name}_%j.out" \
                 --error="${LOG_DIR}/sim_${name}_%j.err" \
-                --export=ALL,SIM_FLAGS="${flags}" \
+                --export=ALL,DLB_DIR="${DLB_DIR}",SIM_FLAGS="${flags}" \
                 --array=0-$((SEED_COUNT-1)) \
                 "${SIM_SCRIPT}" \
         )
@@ -88,15 +90,17 @@ for i in "${!NAMES[@]}"; do
         # Dispatch collate job too
         sbatch --job-name="col-${name}"  \
             --dependency=afterok:$JOB_ID \
+            --chdir="${DLB_DIR}" \
             --output="${LOG_DIR}/col_${name}_%j.out" \
             --error="${LOG_DIR}/col_${name}_%j.err" \
-            --export=ALL,SAVE_NAME="${name}" \
+            --export=ALL,DLB_DIR="${DLB_DIR}",SAVE_NAME="${name}" \
             "${COL_SCRIPT}"
     else
         sbatch --job-name="sim-${name}" \
+           --chdir="${DLB_DIR}" \
            --output="${LOG_DIR}/sim_${name}_%j.out" \
            --error="${LOG_DIR}/sim_${name}_%j.err" \
-           --export=ALL,SIM_FLAGS="${flags}" \
+           --export=ALL,DLB_DIR="${DLB_DIR}",SIM_FLAGS="${flags}" \
            "${SIM_SCRIPT}"
     fi
 done

@@ -1,11 +1,12 @@
 #!/bin/bash
 # Submits all two-tower training jobs to Slurm
 
-SBATCH_SCRIPT="slurm/train-tt.sbatch"
-DLB_DIR="/dcs/23/u5567816/deep-linear-bandits"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DLB_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SBATCH_SCRIPT="${SCRIPT_DIR}/train-tt.sbatch"
 LOG_DIR="${DLB_DIR}/slurm/logs"
 
-mkdir -p $LOG_DIR # If doesn't exist
+mkdir -p "$LOG_DIR" # If doesn't exist
 
 COMMON="--seed 117 --epochs 100"
 
@@ -61,9 +62,10 @@ for i in "${!NAMES[@]}"; do
     flags="--save-name ${name} ${COMMON} ${FLAGS[$i]}"
     echo "Submitting tt-${name}: ${flags}"
     sbatch --job-name="tt-${name}" \
+            --chdir="${DLB_DIR}" \
            --output="${LOG_DIR}/train-tt_${name}_%j.out" \
            --error="${LOG_DIR}/train-tt_${name}_%j.err" \
-           --export=ALL,TT_FLAGS="${flags}" \
+            --export=ALL,DLB_DIR="${DLB_DIR}",TT_FLAGS="${flags}" \
            "${SBATCH_SCRIPT}"
 done
 
