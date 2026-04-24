@@ -55,23 +55,26 @@ You can use `uv run dlb --help` at any time to see all commands.
 ### 1) Training a two-tower model
 
 ```bash
-uv run dlb train-tt --save-name default
+uv run dlb train-tt --save-name <model-name>
 ```
 Use `uv run dlb train-tt --help` to see all two-tower parameters, including defaults.  
-Outputs are written to `tt-models/<model-name>/`.  
+Outputs are written to `tt-models/<model-name>/`.
 
 ### 2) Running a simulation
 
 ```bash
-uv run dlb simulate --save-name sim1 --model default
+uv run dlb simulate --save-name <sim-name> --model <model-name>
 ```
 Use `uv run dlb simulate --help` to see all simulation parameters, including defaults.  
 Outputs are written to `simulations/<sim-name>`.
 
 ## Example Local Run (GPU)
 ```bash
+# Train a two-tower model `tt1` with hidden layers [512, 256] and output dims 32
 uv run dlb train-tt --save-name tt1 --hidden-size 512 --hidden-size 256 --output-size 32
-uv run dlb simulate --save-name sim1 --model tt1 --seed 125 --rounds 100
+
+# Simulate all the bandit policies on model `tt1` for 10000 rounds on seed 125, saved as `sim1`
+uv run dlb simulate --save-name sim1 --model tt1 --seed 125 --rounds 10000
 ```
 
 ## Additional Commands
