@@ -1,6 +1,7 @@
 .venv
 .zed
 .ropeproject
+.github
 kuairec
 src/deep_linear_bandits/__pycache__/
 slurm/logs/
