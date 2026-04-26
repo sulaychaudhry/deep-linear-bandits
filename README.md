@@ -157,3 +157,5 @@ All logs are written to `slurm/logs/`.
 ## Notes
 
 - If you can't run the scripts in `slurm/`, try running `chmod u+x slurm/*`
+- If you run into weird PyTorch issues complaining about `torch.compile`, then you likely need to make sure that you adhere to the [`torch.compile` system requirements](https://docs.pytorch.org/tutorials/intermediate/torch_compile_tutorial.html)
+    - As stated there, it's usually as simple as just ensuring that a C++ compiler (e.g. `g++`) is installed, and that a Python development package is installed (`python-devel`/`python-dev`) via your package manager (`apt`,`dnf`,`pacman`, etc.)
