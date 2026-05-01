@@ -1,4 +1,6 @@
-# Deep Linear Bandits
+# Bandits for Online Exploration in Deep Recommenders
+
+**Sulay Chaudhry | University of Warwick | Third Year Project | 25/26**
 
 ## Overview
 
